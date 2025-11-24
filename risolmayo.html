@@ -109,6 +109,7 @@
         .popup-footer p {
             margin-bottom: 15px;
             opacity: 0.9;
+            font-size: 0.95rem;
         }
 
         .popup-btn {
@@ -120,6 +121,7 @@
             font-weight: 600;
             cursor: pointer;
             transition: all 0.3s ease;
+            font-size: 0.95rem;
         }
 
         .popup-btn:hover {
@@ -183,21 +185,23 @@
             --bright-red: #e31919;
         }
         
-        /* Header Styles */
-        header {
-            background: linear-gradient(to right, var(--dark-red), var(--deep-red));
-            color: white;
-            padding: 1rem 0;
-            box-shadow: 0 2px 10px rgba(0, 0, 0, 0.2);
-            position: sticky;
-            top: 0;
-            z-index: 100;
-        }
-        
+        /* Container */
         .container {
             width: 90%;
             max-width: 1200px;
             margin: 0 auto;
+            padding: 0 15px;
+        }
+        
+        /* Header Styles - Updated for mobile */
+        header {
+            background: linear-gradient(to right, var(--dark-red), var(--deep-red));
+            color: white;
+            padding: 12px 0;
+            box-shadow: 0 2px 10px rgba(0, 0, 0, 0.2);
+            position: sticky;
+            top: 0;
+            z-index: 100;
         }
         
         .header-content {
@@ -213,12 +217,12 @@
         }
         
         .logo h1 {
-            font-size: 1.5rem;
+            font-size: 1.3rem;
             font-weight: 700;
         }
         
         .logo-icon {
-            font-size: 1.8rem;
+            font-size: 1.5rem;
         }
         
         /* Navigation */
@@ -228,7 +232,7 @@
         }
         
         nav ul li {
-            margin-left: 1rem;
+            margin-left: 20px;
         }
         
         nav ul li a {
@@ -243,7 +247,7 @@
             color: var(--gold);
         }
         
-        /* Promo Slideshow */
+        /* Promo Slideshow - FIXED */
         .promo-slideshow {
             position: relative;
             height: 400px;
@@ -251,6 +255,12 @@
             margin-bottom: 2rem;
             border-radius: 0 0 15px 15px;
             box-shadow: 0 5px 15px rgba(0, 0, 0, 0.1);
+        }
+        
+        .slides-container {
+            position: relative;
+            width: 100%;
+            height: 100%;
         }
         
         .slide {
@@ -268,41 +278,45 @@
             text-align: center;
             color: white;
             padding: 2rem;
+            background-size: cover;
+            background-position: center;
+            background-repeat: no-repeat;
         }
         
         .slide.active {
             opacity: 1;
+            z-index: 1;
         }
         
         .slide-1 {
             background: linear-gradient(rgba(122, 0, 0, 0.8), rgba(143, 0, 0, 0.8)), url('https://image2url.com/images/1763909555146-00225b3f-670b-4a34-8109-33c72a0d9c4e.jpeg');
-            background-size: cover;
-            background-position: center;
         }
         
         .slide-2 {
             background: linear-gradient(rgba(122, 0, 0, 0.8), rgba(143, 0, 0, 0.8)), url('https://image2url.com/images/1763910977583-4086bb88-3ee9-46cc-9fcb-bf79b782fa30.jpeg');
-            background-size: cover;
-            background-position: center;
         }
         
         .slide-3 {
             background: linear-gradient(rgba(122, 0, 0, 0.8), rgba(143, 0, 0, 0.8)), url('https://images.unsplash.com/photo-1563379926898-05f4575a45d8?ixlib=rb-4.0.3&auto=format&fit=crop&w=800&q=80');
-            background-size: cover;
-            background-position: center;
+        }
+        
+        .slide-content {
+            max-width: 600px;
+            padding: 0 20px;
         }
         
         .slide h2 {
-            font-size: 2.5rem;
+            font-size: 2.2rem;
             margin-bottom: 1rem;
             text-shadow: 2px 2px 4px rgba(0, 0, 0, 0.5);
+            line-height: 1.2;
         }
         
         .slide p {
-            font-size: 1.2rem;
-            max-width: 600px;
+            font-size: 1.1rem;
             margin-bottom: 1.5rem;
             text-shadow: 1px 1px 3px rgba(0, 0, 0, 0.5);
+            line-height: 1.4;
         }
         
         .slide .promo-price {
@@ -320,6 +334,7 @@
             transform: translateX(-50%);
             display: flex;
             gap: 10px;
+            z-index: 2;
         }
         
         .indicator {
@@ -339,13 +354,14 @@
             display: inline-block;
             background-color: var(--gold);
             color: var(--dark-red);
-            padding: 0.8rem 1.5rem;
+            padding: 12px 30px;
             border-radius: 50px;
             text-decoration: none;
             font-weight: 600;
             transition: all 0.3s;
             border: none;
             cursor: pointer;
+            font-size: 1rem;
         }
         
         .btn:hover {
@@ -354,9 +370,9 @@
             box-shadow: 0 5px 15px rgba(0, 0, 0, 0.1);
         }
         
-        /* Section Styles */
+        /* Section Styles - Updated sizes */
         section {
-            padding: 3rem 0;
+            padding: 50px 0;
         }
         
         .section-title {
@@ -365,6 +381,7 @@
             color: var(--dark-red);
             position: relative;
             padding-bottom: 0.5rem;
+            font-size: 1.8rem;
         }
         
         .section-title:after {
@@ -378,7 +395,7 @@
             background-color: var(--gold);
         }
         
-        /* Catalog Styles */
+        /* Catalog Styles - Updated sizes */
         .catalog {
             display: grid;
             grid-template-columns: repeat(auto-fill, minmax(280px, 1fr));
@@ -434,10 +451,11 @@
             color: #666;
             margin-bottom: 1rem;
             flex-grow: 1;
+            font-size: 0.9rem;
         }
         
         .product-price {
-            font-size: 1.3rem;
+            font-size: 1.2rem;
             font-weight: 700;
             color: var(--bright-red);
             margin-bottom: 1rem;
@@ -456,6 +474,7 @@
             justify-content: center;
             gap: 8px;
             transition: background-color 0.3s;
+            font-size: 0.9rem;
         }
         
         .whatsapp-btn:hover {
@@ -472,6 +491,11 @@
         
         .about-text {
             flex: 1;
+        }
+        
+        .about-text p {
+            margin-bottom: 1rem;
+            font-size: 0.95rem;
         }
         
         .about-image {
@@ -492,7 +516,7 @@
             display: flex;
             flex-wrap: wrap;
             justify-content: center;
-            gap: 2rem;
+            gap: 1.5rem;
             margin-top: 2rem;
         }
         
@@ -519,11 +543,21 @@
             font-size: 1.2rem;
         }
         
-        /* Footer */
+        .contact-item div h3 {
+            font-size: 1rem;
+            margin-bottom: 5px;
+        }
+        
+        .contact-item div p {
+            font-size: 0.9rem;
+            color: #666;
+        }
+        
+        /* Footer - Updated sizes */
         footer {
             background-color: var(--dark-red);
             color: white;
-            padding: 2rem 0;
+            padding: 40px 0 20px;
             text-align: center;
         }
         
@@ -531,6 +565,15 @@
             display: flex;
             flex-direction: column;
             gap: 1.5rem;
+        }
+        
+        .footer-content .logo h2 {
+            font-size: 1.5rem;
+        }
+        
+        .footer-content p {
+            font-size: 0.9rem;
+            opacity: 0.9;
         }
         
         .social-links {
@@ -542,19 +585,28 @@
         .social-links a {
             color: white;
             background-color: rgba(255, 255, 255, 0.1);
-            width: 40px;
-            height: 40px;
+            width: 35px;
+            height: 35px;
             border-radius: 50%;
             display: flex;
             align-items: center;
             justify-content: center;
             text-decoration: none;
             transition: background-color 0.3s;
+            font-size: 1rem;
         }
         
         .social-links a:hover {
             background-color: var(--gold);
             color: var(--dark-red);
+        }
+        
+        .copyright {
+            margin-top: 1rem;
+            padding-top: 1rem;
+            border-top: 1px solid rgba(255, 255, 255, 0.1);
+            font-size: 0.85rem;
+            color: rgba(255, 255, 255, 0.7);
         }
         
         /* Mobile Navigation */
@@ -567,7 +619,7 @@
             cursor: pointer;
         }
         
-        /* Responsive Design */
+        /* Responsive Design - Updated for mobile */
         @media (max-width: 768px) {
             .header-content {
                 flex-wrap: wrap;
@@ -600,18 +652,36 @@
                 display: block;
                 padding: 0.5rem 0;
                 border-bottom: 1px solid rgba(255, 255, 255, 0.1);
+                font-size: 0.9rem;
             }
             
             .promo-slideshow {
                 height: 350px;
             }
             
+            .slide {
+                padding: 1.5rem;
+            }
+            
             .slide h2 {
-                font-size: 2rem;
+                font-size: 1.8rem;
             }
             
             .slide p {
                 font-size: 1rem;
+            }
+            
+            .slide .promo-price {
+                font-size: 1.6rem;
+            }
+            
+            .section {
+                padding: 40px 0;
+            }
+            
+            .section-title {
+                font-size: 1.5rem;
+                margin-bottom: 1.5rem;
             }
             
             .catalog {
@@ -626,6 +696,7 @@
             .contact-info {
                 flex-direction: column;
                 align-items: center;
+                gap: 1rem;
             }
             
             .contact-item {
@@ -641,11 +712,28 @@
                 width: 95%;
                 max-width: 350px;
             }
+            
+            .popup-footer h3 {
+                font-size: 1.1rem;
+            }
+            
+            .popup-footer p {
+                font-size: 0.9rem;
+            }
+            
+            footer {
+                padding: 30px 0 15px;
+            }
         }
         
         @media (max-width: 480px) {
+            .container {
+                width: 95%;
+                padding: 0 10px;
+            }
+            
             .logo h1 {
-                font-size: 1.3rem;
+                font-size: 1.2rem;
             }
             
             .promo-slideshow {
@@ -656,8 +744,17 @@
                 font-size: 1.5rem;
             }
             
+            .slide p {
+                font-size: 0.9rem;
+            }
+            
             .slide .promo-price {
-                font-size: 1.5rem;
+                font-size: 1.4rem;
+            }
+            
+            .btn {
+                padding: 10px 25px;
+                font-size: 0.9rem;
             }
             
             .catalog {
@@ -665,7 +762,7 @@
             }
             
             .section-title {
-                font-size: 1.5rem;
+                font-size: 1.3rem;
             }
 
             .popup-content {
@@ -674,7 +771,16 @@
             }
 
             .popup-footer h3 {
-                font-size: 1.1rem;
+                font-size: 1rem;
+            }
+            
+            .popup-footer p {
+                font-size: 0.85rem;
+            }
+            
+            .popup-btn {
+                padding: 8px 20px;
+                font-size: 0.9rem;
             }
         }
     </style>
@@ -736,25 +842,33 @@
         </div>
     </header>
 
-    <!-- Promo Slideshow -->
+    <!-- Promo Slideshow - FIXED -->
     <div class="promo-slideshow" id="home">
-        <div class="slide slide-1 active">
-            <h2>Promo Spesial Akhir Tahun!</h2>
-            <p>Dapatkan diskon 10% untuk pembelian minimal 10 pcs risol mayo 4k only</p>
-            <div class="promo-price">Hanya Rp 36.000</div>
-            <a href="#catalog" class="btn">Pesan Sekarang</a>
-        </div>
-        <div class="slide slide-2">
-            <h2>Risol Mayo Baru!</h2>
-            <p>Coba varian terbaru kami: Risol Ayam Matah dengan sensasi pedas segar</p>
-            <div class="promo-price">Rp 4.000 / pcs</div>
-            <a href="#catalog" class="btn">Lihat Katalog</a>
-        </div>
-        <div class="slide slide-3">
-            <h2>Gratis Ongkir!</h2>
-            <p>Gratis ongkir untuk pembelian di atas Rp 40.000 di area Kota Serang</p>
-            <div class="promo-price">Min. Belanja Rp 40.000</div>
-            <a href="#catalog" class="btn">Belanja Sekarang</a>
+        <div class="slides-container">
+            <div class="slide slide-1 active">
+                <div class="slide-content">
+                    <h2>Promo Spesial Akhir Tahun!</h2>
+                    <p>Dapatkan diskon 10% untuk pembelian minimal 10 pcs risol mayo 4k only</p>
+                    <div class="promo-price">Hanya Rp 36.000</div>
+                    <a href="#catalog" class="btn">Pesan Sekarang</a>
+                </div>
+            </div>
+            <div class="slide slide-2">
+                <div class="slide-content">
+                    <h2>Risol Mayo Baru!</h2>
+                    <p>Coba varian terbaru kami: Risol Ayam Matah dengan sensasi pedas segar</p>
+                    <div class="promo-price">Rp 4.000 / pcs</div>
+                    <a href="#catalog" class="btn">Lihat Katalog</a>
+                </div>
+            </div>
+            <div class="slide slide-3">
+                <div class="slide-content">
+                    <h2>Gratis Ongkir!</h2>
+                    <p>Gratis ongkir untuk pembelian di atas Rp 40.000 di area Kota Serang</p>
+                    <div class="promo-price">Min. Belanja Rp 40.000</div>
+                    <a href="#catalog" class="btn">Belanja Sekarang</a>
+                </div>
+            </div>
         </div>
         <div class="slide-indicators">
             <div class="indicator active" data-slide="0"></div>
@@ -767,7 +881,7 @@
     <section id="catalog">
         <div class="container">
             <h2 class="section-title">Katalog Aneka Risol</h2>
-            <p style="text-align: center; margin-bottom: 1rem;">Klik produk untuk pesan via WhatsApp</p>
+            <p style="text-align: center; margin-bottom: 1rem; font-size: 0.95rem;">Klik produk untuk pesan via WhatsApp</p>
             
             <div class="catalog">
                 <!-- Product 1 -->
@@ -903,14 +1017,23 @@
                     <a href="#"><i class="fab fa-tiktok"></i></a>
                     <a href="https://wa.me/6285606969929"><i class="fab fa-whatsapp"></i></a>
                 </div>
-                <p>&copy; 2026 Risol Mayo. All rights reserved.</p>
+                <div class="copyright">
+                    <p>&copy; <span id="copyrightYear">2026</span> Risol Mayo. All rights reserved.</p>
+                </div>
             </div>
         </div>
     </footer>
 
     <script>
-        // Welcome Popup Functionality
+        // Auto update copyright year
         document.addEventListener('DOMContentLoaded', function() {
+            const currentYear = new Date().getFullYear();
+            const copyrightElement = document.getElementById('copyrightYear');
+            if (copyrightElement) {
+                copyrightElement.textContent = currentYear;
+            }
+
+            // Welcome Popup Functionality
             const welcomePopup = document.getElementById('welcomePopup');
             const popupClose = document.getElementById('popupClose');
             const popupBtn = document.getElementById('popupBtn');
@@ -972,7 +1095,7 @@
             });
         });
         
-        // Promo Slideshow
+        // Promo Slideshow - FIXED
         let currentSlide = 0;
         const slides = document.querySelectorAll('.slide');
         const indicators = document.querySelectorAll('.indicator');
@@ -990,8 +1113,12 @@
             
             // Show the selected slide
             currentSlide = n;
-            slides[currentSlide].classList.add('active');
-            indicators[currentSlide].classList.add('active');
+            if (slides[currentSlide]) {
+                slides[currentSlide].classList.add('active');
+            }
+            if (indicators[currentSlide]) {
+                indicators[currentSlide].classList.add('active');
+            }
         }
         
         // Auto slide change
@@ -1024,7 +1151,7 @@
                 const targetElement = document.querySelector(targetId);
                 if (targetElement) {
                     window.scrollTo({
-                        top: targetElement.offsetTop - 80,
+                        top: targetElement.offsetTop - 70,
                         behavior: 'smooth'
                     });
                 }
