@@ -17,4 +17,4 @@ ENV ADMIN_HOST=0.0.0.0 \
 
 EXPOSE 7860
 
-CMD ["python", "app.py"]
+CMD ["python", "index.py"]

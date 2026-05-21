@@ -3,7 +3,8 @@
 Standalone web dashboard for controlling multiple Pterodactyl game servers
 from a single page. Completely independent from any specific bot — you
 deploy this on its own host (different machine, different VPS, Render,
-Railway, Fly, Docker, anything).
+Railway, Fly, Vercel, Docker — anything that can run Python or a Python
+serverless function).
 
 It connects to each Pterodactyl panel over the public HTTPS API. The
 admin host only needs **outbound** internet access.
@@ -18,23 +19,23 @@ admin host only needs **outbound** internet access.
 - Auto-refresh every 15s while the tab is visible
 - Password-gated; API keys never leave the server
 
-## Project structure
+## Project structure (flat — same layout works everywhere)
 
 ```
 admin-panel/
-├── app.py                   Flask app + Pterodactyl proxy
+├── index.py              Flask app + Pterodactyl proxy (the entrypoint)
+├── index.html            Landing page
+├── app.js                Front-end logic
+├── style.css             Styles
+├── config.example.json   Copy this to config.json (local/VPS only)
 ├── requirements.txt
-├── config.example.json      Copy this to config.json
-├── Dockerfile               Optional container build
-├── Procfile                 Heroku/Railway/Render-style runner
-├── templates/
-│   └── index.html
-└── static/
-    ├── style.css
-    └── app.js
+├── vercel.json           Vercel build config
+├── Procfile              Heroku/Render/Railway/Fly runner
+├── Dockerfile            Optional container build
+└── README.md
 ```
 
-## Setup
+## Setup (local / VPS / Docker)
 
 1. **Create a virtual env** (recommended)
 
@@ -73,12 +74,12 @@ admin-panel/
 
 4. **Run**
    ```
-   python app.py
+   python index.py
    ```
-   Open http://localhost:7860 (or whatever host/port you configured).
+   Open http://localhost:7860.
 
-The config file is **hot-reloaded**. Edit `config.json`, save it, and the
-next refresh on the page picks up the change without restarting.
+The config file is **hot-reloaded** (file mode only). Edit `config.json`,
+save it, and the next request picks up the change without restarting.
 
 ## Environment overrides
 
@@ -95,20 +96,15 @@ These take precedence over `config.json`:
 | `PTERO_TIMEOUT`      | Per-panel HTTP timeout in seconds                              | `5`              |
 | `PTERO_PARALLEL`     | Max concurrent /resources calls                                | `8`              |
 
-Useful for running with a process manager or PaaS where the password
-should not live in the file system.
-
-## Deployment notes
+## Deployment
 
 ### Plain VPS / shared host
-
-Use a process manager so the app restarts on crash:
 
 ```
 # systemd unit (Linux)
 [Service]
 WorkingDirectory=/opt/admin-panel
-ExecStart=/opt/admin-panel/.venv/bin/python app.py
+ExecStart=/opt/admin-panel/.venv/bin/python index.py
 Environment=ADMIN_PASSWORD=your-secret
 Restart=always
 ```
@@ -129,22 +125,19 @@ docker run -d \
 
 ### Render / Railway / Fly.io
 
-The `Procfile` already defines `web: python app.py`. Set the
-`ADMIN_PASSWORD` environment variable in the platform UI and either commit
-your `config.json` or upload it as a secret file mounted at
-`/app/config.json`.
+The `Procfile` already defines `web: python index.py`. Set the
+`ADMIN_PASSWORD` and `ADMIN_CONFIG_JSON` (or commit a `config.json`)
+environment variables in the platform UI.
 
 ### Vercel (serverless)
 
-Vercel works, but with caveats — Vercel is serverless, so:
-- No writable / persistent filesystem. You can't ship `config.json`
-  alongside the function and edit it later. Use the env-var config path
-  instead (`ADMIN_CONFIG_JSON` or `ADMIN_CONFIG_B64`).
-- 10 second hard timeout per request on the Hobby plan (60s on Pro). If
-  any of your panels takes more than ~5s to respond, the whole listing
-  call may exceed budget. Per-panel calls now run in parallel, so this
-  only matters if a single panel is slow.
-- Cold starts add ~0.5–2s on the first request after idle.
+Vercel works, but with caveats — it's serverless:
+- **No writable filesystem.** You can't ship `config.json` and edit it
+  later. Use `ADMIN_CONFIG_JSON` (or `ADMIN_CONFIG_B64`) env vars.
+- **10 second hard timeout** per request on the Hobby plan (60s on Pro).
+  The listing endpoint hits every panel in parallel, so this only
+  matters if a single panel takes >5s to respond.
+- **Cold starts** add ~0.5–2s to the first request after idle.
 - Outbound HTTPS to your Pterodactyl panels works fine.
 
 Steps:
@@ -152,43 +145,51 @@ Steps:
 1. Push the `admin-panel/` folder to a Git repo (GitHub / GitLab /
    Bitbucket).
 2. In Vercel, **New Project** → **Import Git Repository**.
-3. Set the **Root Directory** to `admin-panel` if your repo contains
-   other code. Otherwise leave it as the repo root.
-4. Framework Preset: **Other** (Vercel will auto-detect Python from
-   `vercel.json`).
-5. Add **Environment Variables**:
+3. **Root Directory**: set to `admin-panel` if your repo contains other
+   code, otherwise leave as the repo root.
+4. **Framework Preset**: leave as **Other** — Vercel will pick up
+   `vercel.json` automatically.
+5. Add **Environment Variables** in the project settings:
    - `ADMIN_PASSWORD` — login password for the UI
-   - `ADMIN_CONFIG_JSON` — full JSON config (without the `password`
-     field, since `ADMIN_PASSWORD` env var overrides it). Example:
-     ```json
+   - `ADMIN_CONFIG_JSON` — full JSON config, single line. Example:
+     ```
      {"panels":[{"id":"main","name":"Main Bot","panelUrl":"https://panel.example.com","serverId":"abcd1234","clientApiKey":"ptlc_xxx"}]}
      ```
-     If raw JSON is awkward in the env-var UI (quoting / size), use
-     `ADMIN_CONFIG_B64` instead with the base64-encoded version:
+     If raw JSON is awkward (quoting, length), use `ADMIN_CONFIG_B64`
+     instead — encode the JSON with `base64`:
      ```
-     echo -n '{"panels":[...]}' | base64 -w0
+     # Linux/macOS:
+     echo -n '{"panels":[...]}' | base64
+     # PowerShell:
+     [Convert]::ToBase64String([System.Text.Encoding]::UTF8.GetBytes('{"panels":[...]}'))
      ```
-6. Deploy. Open the assigned URL — the page should prompt for the
+6. **Deploy.** Open the assigned URL — the page should prompt for the
    password.
-7. To change panels, update `ADMIN_CONFIG_JSON` in Vercel project
-   settings and redeploy (or just trigger a redeploy — Vercel doesn't
-   pick up env-var changes on existing instances).
 
-Files relevant for Vercel:
-- `vercel.json` — runtime config + 10s `maxDuration`
-- `api/index.py` — serverless entrypoint that re-exports the Flask app
-- `.vercelignore` — keeps the deployed bundle small
+To change panels later: edit `ADMIN_CONFIG_JSON` in Vercel's project
+settings and trigger a redeploy. Vercel does not pick up env-var changes
+on running instances without a redeploy.
+
+#### Vercel files
+
+- `vercel.json` — runtime config, declares `index.py` as the
+  `@vercel/python` build target and rewrites all routes to it.
+- `index.py` — Flask app (Vercel imports `app` from this module).
+- `index.html`, `app.js`, `style.css` — static assets served by Flask
+  via the allowlist in `index.py`.
 
 ## Security
 
 - The admin host only needs outbound HTTPS access — it never receives
   callbacks from your panels.
-- API keys live only in `config.json` on the admin host. They are
-  **never** sent to the browser; the server proxies every action.
-- Use a strong `password` (or an `ADMIN_PASSWORD` env var). Always run
-  behind HTTPS in production (nginx, Caddy, Cloudflare Tunnel).
+- API keys live only on the admin host. They are **never** sent to the
+  browser; the server proxies every action.
+- Use a strong `ADMIN_PASSWORD`. Always run behind HTTPS in production
+  (nginx, Caddy, Cloudflare Tunnel, or just deploy on Vercel/Render
+  which give you HTTPS for free).
 - The Pterodactyl client API key only needs power permissions; create a
-  dedicated key with the minimum scope you actually use.
+  dedicated key with the minimum scope you actually use. Restrict
+  allowed IPs to your admin host if your panel supports it.
 
 ## Pterodactyl API key
 
