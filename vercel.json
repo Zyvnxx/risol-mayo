@@ -6,15 +6,11 @@
             "use": "@vercel/python",
             "config": {
                 "maxLambdaSize": "15mb",
-                "includeFiles": [
-                    "index.html",
-                    "style.css",
-                    "app.js"
-                ]
+                "includeFiles": "**"
             }
         }
     ],
-    "rewrites": [
-        { "source": "/(.*)", "destination": "/index.py" }
+    "routes": [
+        { "src": "/(.*)", "dest": "/index.py" }
     ]
 }

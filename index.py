@@ -45,6 +45,41 @@ from flask import Flask, jsonify, request, send_from_directory
 # Paths & constants
 # ---------------------------------------------------------------------------
 BASE_DIR = Path(__file__).resolve().parent
+
+# When the lambda is unzipped on Vercel, included files may live next to
+# index.py, or one level up depending on builder version. Walk a small
+# list of candidates so the page assets resolve no matter where Vercel
+# put them.
+_FILE_LOOKUP_DIRS: list[Path] = []
+def _register_lookup_dirs() -> None:
+    seen = set()
+    for cand in (
+        BASE_DIR,
+        BASE_DIR.parent,
+        Path.cwd(),
+        Path("/var/task"),
+        Path("/var/task") / BASE_DIR.name,
+    ):
+        try:
+            cand = cand.resolve()
+        except Exception:
+            continue
+        if cand in seen or not cand.exists():
+            continue
+        seen.add(cand)
+        _FILE_LOOKUP_DIRS.append(cand)
+_register_lookup_dirs()
+
+
+def _find_asset(filename: str) -> Path | None:
+    """Locate an HTML/CSS/JS file across the candidate roots."""
+    for root in _FILE_LOOKUP_DIRS:
+        p = root / filename
+        if p.is_file():
+            return p
+    return None
+
+
 CONFIG_PATH = Path(os.environ.get("ADMIN_CONFIG") or BASE_DIR / "config.json")
 
 # Per-panel HTTP timeout & parallelism. Tight on Vercel (10s budget).
@@ -246,27 +281,65 @@ app = Flask(__name__, static_folder=None)
 
 @app.route("/")
 def index():
-    """Serve the landing page directly from the project root."""
-    return send_from_directory(str(BASE_DIR), "index.html")
+    """Serve the landing page from any of the candidate roots."""
+    target = _find_asset("index.html")
+    if target is None:
+        return (
+            "<h1>index.html not found</h1>"
+            "<p>Lambda is missing the bundled HTML. "
+            "Visit <code>/_debug</code> for diagnostics.</p>",
+            500,
+            {"Content-Type": "text/html; charset=utf-8"},
+        )
+    return send_from_directory(str(target.parent), target.name)
 
 
 @app.route("/<path:filename>")
 def root_file(filename: str):
-    """Serve a small allowlist of static assets from the project root.
+    """Serve a small allowlist of static assets.
 
     We deliberately do not expose every file — config.json, the source
     .py, and similar would otherwise be downloadable."""
     if filename in STATIC_FILES:
+        target = _find_asset(filename)
+        if target is None:
+            return ("", 404)
         return send_from_directory(
-            str(BASE_DIR),
-            filename,
+            str(target.parent),
+            target.name,
             mimetype=STATIC_FILES[filename],
         )
     if filename == "favicon.ico":
-        if (BASE_DIR / "favicon.ico").exists():
-            return send_from_directory(str(BASE_DIR), "favicon.ico")
-        return ("", 204)
+        target = _find_asset("favicon.ico")
+        if target is None:
+            return ("", 204)
+        return send_from_directory(str(target.parent), target.name)
     return ("", 404)
+
+
+@app.route("/_debug")
+def debug_info():
+    """Diagnostic endpoint — dumps where the lambda thinks files are.
+    Useful when assets 404 on a fresh Vercel deploy."""
+    info = {
+        "base_dir": str(BASE_DIR),
+        "cwd": str(Path.cwd()),
+        "lookup_dirs": [
+            {"path": str(d), "files": sorted(p.name for p in d.iterdir() if p.is_file())[:50]}
+            for d in _FILE_LOOKUP_DIRS
+        ],
+        "found": {
+            name: (str(_find_asset(name)) if _find_asset(name) else None)
+            for name in ("index.html", "app.js", "style.css", "config.json")
+        },
+        "env_config": {
+            "ADMIN_CONFIG_JSON": bool(os.environ.get("ADMIN_CONFIG_JSON")),
+            "ADMIN_CONFIG_B64":  bool(os.environ.get("ADMIN_CONFIG_B64")),
+            "ADMIN_PASSWORD":    bool(os.environ.get("ADMIN_PASSWORD")),
+        },
+        "config_panels": len(_collect_panels()),
+    }
+    return jsonify(info), 200
 
 
 @app.route("/api/health", methods=["GET"])
