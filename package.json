@@ -1,9 +1,0 @@
-{
-  "name": "risol-mayo-website",
-  "version": "1.0.0",
-  "description": "Website UMKM Risol Mayo",
-  "main": "risolmayo.html",
-  "scripts": {
-    "build": "echo 'Building static site'"
-  }
-}
