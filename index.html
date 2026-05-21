@@ -1,0 +1,101 @@
+<!--
+Admin Panel — standalone Pterodactyl multi-server controller.
+Independent from any specific bot deployment.
+-->
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="utf-8">
+    <meta http-equiv="X-UA-Compatible" content="IE=edge">
+    <title>Admin Panels</title>
+    <meta name="description" content="Pterodactyl multi-panel controller">
+    <meta name="viewport" content="width=device-width, initial-scale=1">
+    <link rel="stylesheet"
+          href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700;800&display=swap">
+    <link rel="stylesheet" href="{{ url_for('static', filename='style.css') }}">
+    <script defer src="{{ url_for('static', filename='app.js') }}"></script>
+</head>
+<body>
+
+<!-- ============ TOP BAR ============ -->
+<header class="adm-topbar">
+    <div class="adm-brand">
+        <div class="adm-brand-mark">⚡</div>
+        <div class="adm-brand-text">
+            <span class="adm-brand-title">Admin Panels</span>
+            <span class="adm-brand-sub">Pterodactyl multi-server control</span>
+        </div>
+    </div>
+    <div class="adm-status-pill" id="adm-status-pill">
+        <span class="adm-status-dot"></span>
+        <span id="adm-status-text">Connecting…</span>
+    </div>
+    <div class="adm-actions">
+        <button id="adm-refresh-btn" class="adm-btn adm-btn-ghost" type="button" title="Refresh now">
+            <span>↺</span> Refresh
+        </button>
+        <button id="adm-logout-btn" class="adm-btn adm-btn-ghost" type="button" title="Forget password & re-enter">
+            <span>⎋</span> Logout
+        </button>
+    </div>
+</header>
+
+<!-- ============ TOAST ============ -->
+<div id="adm-toast" class="adm-toast adm-hidden" role="status">
+    <span id="adm-toast-text">—</span>
+</div>
+
+<!-- ============ MAIN ============ -->
+<main class="adm-main">
+
+    <!-- summary strip -->
+    <section class="adm-summary">
+        <div class="adm-stat">
+            <span class="adm-stat-label">Total</span>
+            <span class="adm-stat-value" id="adm-total">—</span>
+        </div>
+        <div class="adm-stat adm-stat--ok">
+            <span class="adm-stat-label">Running</span>
+            <span class="adm-stat-value" id="adm-running">—</span>
+        </div>
+        <div class="adm-stat adm-stat--warn">
+            <span class="adm-stat-label">Offline</span>
+            <span class="adm-stat-value" id="adm-offline">—</span>
+        </div>
+        <div class="adm-stat adm-stat--err">
+            <span class="adm-stat-label">Unreachable</span>
+            <span class="adm-stat-value" id="adm-unreachable">—</span>
+        </div>
+    </section>
+
+    <!-- bulk actions -->
+    <section class="adm-bulk">
+        <div class="adm-bulk-info">
+            <h2 class="adm-bulk-title">Bulk actions</h2>
+            <p class="adm-bulk-sub">Apply a power signal to every configured panel sequentially.</p>
+        </div>
+        <div class="adm-bulk-actions">
+            <button class="adm-btn adm-btn-success" data-bulk="start" type="button">
+                <span>▶</span> Start All
+            </button>
+            <button class="adm-btn adm-btn-warn" data-bulk="restart" type="button">
+                <span>↻</span> Restart All
+            </button>
+            <button class="adm-btn adm-btn-danger" data-bulk="stop" type="button">
+                <span>■</span> Stop All
+            </button>
+        </div>
+    </section>
+
+    <!-- panel grid -->
+    <section class="adm-grid" id="adm-grid">
+        <div class="adm-loading">Loading panels…</div>
+    </section>
+
+    <footer class="adm-footer">
+        <p>Standalone Admin · Pterodactyl multi-server controller</p>
+    </footer>
+</main>
+
+</body>
+</html>

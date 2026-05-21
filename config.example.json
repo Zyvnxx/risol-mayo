@@ -1,0 +1,24 @@
+{
+    "_comment": "Copy this file to config.json and edit it. Environment variables ADMIN_PORT, ADMIN_HOST, ADMIN_PASSWORD override these values.",
+
+    "host": "0.0.0.0",
+    "port": 7860,
+    "password": "change-me-please",
+
+    "panels": [
+        {
+            "id": "main",
+            "name": "Main Bot",
+            "panelUrl": "https://panel.example.com",
+            "serverId": "abcd1234",
+            "clientApiKey": "ptlc_xxxxxxxxxxxxxxxxxxxxxxxxxxxx"
+        },
+        {
+            "id": "alt",
+            "name": "Alt Bot",
+            "panelUrl": "https://panel.example.com",
+            "serverId": "efgh5678",
+            "clientApiKey": "ptlc_yyyyyyyyyyyyyyyyyyyyyyyyyyyy"
+        }
+    ]
+}

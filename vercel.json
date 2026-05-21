@@ -1,15 +1,14 @@
 {
-  "version": 2,
-  "builds": [
-    {
-      "src": "risolmayo.html",
-      "use": "@vercel/static"
+    "version": 2,
+    "builds": [
+        { "src": "api/index.py", "use": "@vercel/python" }
+    ],
+    "rewrites": [
+        { "source": "/(.*)", "destination": "/api/index" }
+    ],
+    "functions": {
+        "api/index.py": {
+            "maxDuration": 10
+        }
     }
-  ],
-  "routes": [
-    {
-      "src": "/(.*)",
-      "dest": "/risolmayo.html"
-    }
-  ]
 }

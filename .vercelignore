@@ -1,0 +1,12 @@
+__pycache__/
+*.pyc
+.venv/
+venv/
+.git/
+.env
+config.json
+*.log
+README.md
+Dockerfile
+.dockerignore
+Procfile
