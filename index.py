@@ -42,9 +42,11 @@ import os
 import secrets
 import sys
 import time
+import traceback
 from concurrent.futures import ThreadPoolExecutor
 from copy import deepcopy
 from pathlib import Path
+from typing import Any, Optional
 
 import requests
 from flask import Flask, jsonify, request, send_from_directory
@@ -285,6 +287,37 @@ def _safe_view(panel: dict, with_status: bool) -> dict:
 # Flask app — flat layout (no templates/, no static/ dirs)
 # ---------------------------------------------------------------------------
 app = Flask(__name__, static_folder=None)
+
+
+@app.errorhandler(Exception)
+def _on_exception(err):
+    """Surface real exception detail instead of letting Vercel render
+    the opaque FUNCTION_INVOCATION_FAILED page.
+
+    The traceback is only revealed to clients that present the admin
+    password (header ``password``) so we don't leak internals publicly."""
+    tb = traceback.format_exc()
+    print("[admin-panel] unhandled exception:\n" + tb, file=sys.stderr)
+
+    # Authenticated callers see the full trace to ease debugging.
+    try:
+        if _check_password():
+            return jsonify(
+                {
+                    "status": "error",
+                    "message": f"{type(err).__name__}: {err}",
+                    "traceback": tb.splitlines()[-12:],
+                }
+            ), 500
+    except Exception:
+        pass
+
+    return jsonify(
+        {
+            "status": "error",
+            "message": f"{type(err).__name__}: {err}",
+        }
+    ), 500
 
 
 @app.route("/")
@@ -567,10 +600,13 @@ def _vercel_creds() -> tuple[str, str, str | None, list[str]] | None:
     return token, project_id, team_id, targets
 
 
-def _vercel_api(method: str, path: str, json_body: dict | None = None,
-                params: dict | None = None) -> requests.Response:
+def _vercel_api(method: str, path: str, json_body: Optional[dict] = None,
+                params: Optional[dict] = None) -> requests.Response:
     creds = _vercel_creds()
-    assert creds is not None
+    if creds is None:
+        raise RuntimeError(
+            "Vercel credentials not configured (VERCEL_TOKEN / VERCEL_PROJECT_ID)."
+        )
     token, _, team_id, _ = creds
     url = f"https://api.vercel.com{path}"
     if team_id:
