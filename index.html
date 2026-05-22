@@ -31,6 +31,9 @@ Independent from any specific bot deployment.
         <span id="adm-status-text">Connecting…</span>
     </div>
     <div class="adm-actions">
+        <button id="adm-settings-btn" class="adm-btn adm-btn-ghost" type="button" title="Edit configuration">
+            <span>⚙</span> Settings
+        </button>
         <button id="adm-refresh-btn" class="adm-btn adm-btn-ghost" type="button" title="Refresh now">
             <span>↺</span> Refresh
         </button>
@@ -43,6 +46,46 @@ Independent from any specific bot deployment.
 <!-- ============ TOAST ============ -->
 <div id="adm-toast" class="adm-toast adm-hidden" role="status">
     <span id="adm-toast-text">—</span>
+</div>
+
+<!-- ============ SETTINGS MODAL ============ -->
+<div id="adm-settings-modal" class="adm-modal adm-hidden" role="dialog" aria-modal="true" aria-labelledby="adm-settings-title">
+    <div class="adm-modal-backdrop" data-modal-close></div>
+    <div class="adm-modal-card">
+        <header class="adm-modal-header">
+            <div>
+                <h2 id="adm-settings-title" class="adm-modal-title">Configuration</h2>
+                <p class="adm-modal-sub" id="adm-settings-source">Loading…</p>
+            </div>
+            <button class="adm-modal-close" type="button" data-modal-close aria-label="Close">×</button>
+        </header>
+
+        <div class="adm-modal-body">
+            <div id="adm-settings-banner" class="adm-modal-banner adm-hidden"></div>
+
+            <div class="adm-settings-toolbar">
+                <div class="adm-settings-toolbar-left">
+                    <strong id="adm-panels-count">0 panel(s)</strong>
+                </div>
+                <div class="adm-settings-toolbar-right">
+                    <button id="adm-add-panel" class="adm-btn adm-btn-ghost" type="button">
+                        <span>+</span> Add panel
+                    </button>
+                </div>
+            </div>
+
+            <div id="adm-settings-list" class="adm-settings-list">
+                <div class="adm-loading">Loading config…</div>
+            </div>
+        </div>
+
+        <footer class="adm-modal-footer">
+            <button class="adm-btn adm-btn-ghost" type="button" data-modal-close>Cancel</button>
+            <button id="adm-settings-save" class="adm-btn adm-btn-success" type="button">
+                <span>💾</span> Save &amp; Redeploy
+            </button>
+        </footer>
+    </div>
 </div>
 
 <!-- ============ MAIN ============ -->

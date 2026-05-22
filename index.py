@@ -26,6 +26,13 @@
 #                          mangles raw JSON).
 #   PTERO_TIMEOUT        — per-panel HTTP timeout in seconds (default 5)
 #   PTERO_PARALLEL       — max concurrent /resources calls (default 8)
+#
+# Optional — enable in-browser config editor (writes the new config to
+# Vercel's env vars and triggers a redeploy):
+#   VERCEL_TOKEN         — Personal Access Token (vercel.com/account/tokens)
+#   VERCEL_PROJECT_ID    — Project ID (Vercel project Settings → General)
+#   VERCEL_TEAM_ID       — only required if the project lives in a team
+#   VERCEL_ENV_TARGET    — "production,preview,development" (default: all)
 
 from __future__ import annotations
 
@@ -36,6 +43,7 @@ import secrets
 import sys
 import time
 from concurrent.futures import ThreadPoolExecutor
+from copy import deepcopy
 from pathlib import Path
 
 import requests
@@ -336,7 +344,11 @@ def debug_info():
             "ADMIN_CONFIG_JSON": bool(os.environ.get("ADMIN_CONFIG_JSON")),
             "ADMIN_CONFIG_B64":  bool(os.environ.get("ADMIN_CONFIG_B64")),
             "ADMIN_PASSWORD":    bool(os.environ.get("ADMIN_PASSWORD")),
+            "VERCEL_TOKEN":      bool(os.environ.get("VERCEL_TOKEN")),
+            "VERCEL_PROJECT_ID": bool(os.environ.get("VERCEL_PROJECT_ID")),
+            "VERCEL_TEAM_ID":    bool(os.environ.get("VERCEL_TEAM_ID")),
         },
+        "vercel_sync_enabled": _vercel_creds() is not None,
         "config_panels": len(_collect_panels()),
     }
     return jsonify(info), 200
@@ -448,6 +460,342 @@ def api_panels_power():
             "panel": panel_msg,
         }
     ), 502
+
+
+# ---------------------------------------------------------------------------
+# Config editor — read & write
+# ---------------------------------------------------------------------------
+#
+# The editor returns the live config with API keys masked, so the UI can
+# safely render them. On save we accept the edited config back; any field
+# that arrives as the literal mask value ("********") is treated as
+# "keep the original", so a user can change panel names without seeing
+# or re-typing keys.
+#
+# Persisting the new config:
+#   • If VERCEL_TOKEN + VERCEL_PROJECT_ID are set, we patch the
+#     ADMIN_CONFIG_JSON env var on Vercel and trigger a redeploy.
+#   • Otherwise (local / VPS / Docker), we write to config.json on disk
+#     and the next request reloads it via _maybe_reload_config().
+
+API_KEY_MASK = "********"
+SENSITIVE_KEYS = ("clientApiKey", "password")
+
+
+def _redact_config(cfg: dict) -> dict:
+    out = deepcopy(cfg) if isinstance(cfg, dict) else {}
+    if isinstance(out.get("password"), str) and out["password"]:
+        out["password"] = API_KEY_MASK
+    panels = out.get("panels")
+    if isinstance(panels, list):
+        for p in panels:
+            if isinstance(p, dict) and p.get("clientApiKey"):
+                p["clientApiKey"] = API_KEY_MASK
+    return out
+
+
+def _merge_unmasked(original: dict, incoming: dict) -> dict:
+    """Recursively replace mask values with the original ones.
+
+    Keeps the structure of ``incoming`` (so deletions work — if a panel
+    is removed, it's removed) but re-fills any masked field with the
+    matching value from ``original``."""
+    if not isinstance(incoming, dict) or not isinstance(original, dict):
+        return incoming
+
+    out: dict = {}
+    for k, v in incoming.items():
+        if v == API_KEY_MASK and k in original:
+            out[k] = original[k]
+        elif isinstance(v, list):
+            orig_list = original.get(k) if isinstance(original.get(k), list) else []
+            new_list = []
+            # Match incoming panels back to originals by `id` so users can
+            # reorder freely without losing keys.
+            orig_by_id = {
+                str(item.get("id")): item
+                for item in orig_list
+                if isinstance(item, dict) and item.get("id") is not None
+            }
+            for item in v:
+                if isinstance(item, dict):
+                    src = orig_by_id.get(str(item.get("id")), {})
+                    new_list.append(_merge_unmasked(src, item))
+                else:
+                    new_list.append(item)
+            out[k] = new_list
+        elif isinstance(v, dict):
+            out[k] = _merge_unmasked(original.get(k, {}), v)
+        else:
+            out[k] = v
+    return out
+
+
+def _validate_config(cfg) -> tuple[bool, str]:
+    if not isinstance(cfg, dict):
+        return False, "Config must be a JSON object."
+    panels = cfg.get("panels")
+    if panels is None:
+        return True, ""  # empty is allowed
+    if not isinstance(panels, list):
+        return False, "`panels` must be an array."
+    seen_ids = set()
+    for i, p in enumerate(panels):
+        if not isinstance(p, dict):
+            return False, f"panels[{i}] must be an object."
+        pid = str(p.get("id") or "").strip()
+        if not pid:
+            return False, f"panels[{i}].id is required."
+        if pid in seen_ids:
+            return False, f"Duplicate panel id: {pid!r}."
+        seen_ids.add(pid)
+        for fld in ("panelUrl", "serverId", "clientApiKey"):
+            val = p.get(fld)
+            if val is not None and not isinstance(val, str):
+                return False, f"panels[{i}].{fld} must be a string."
+    return True, ""
+
+
+def _vercel_creds() -> tuple[str, str, str | None, list[str]] | None:
+    token = os.environ.get("VERCEL_TOKEN")
+    project_id = os.environ.get("VERCEL_PROJECT_ID")
+    if not token or not project_id:
+        return None
+    team_id = os.environ.get("VERCEL_TEAM_ID") or None
+    targets_raw = os.environ.get("VERCEL_ENV_TARGET", "production,preview,development")
+    targets = [t.strip() for t in targets_raw.split(",") if t.strip()]
+    return token, project_id, team_id, targets
+
+
+def _vercel_api(method: str, path: str, json_body: dict | None = None,
+                params: dict | None = None) -> requests.Response:
+    creds = _vercel_creds()
+    assert creds is not None
+    token, _, team_id, _ = creds
+    url = f"https://api.vercel.com{path}"
+    if team_id:
+        params = dict(params or {})
+        params.setdefault("teamId", team_id)
+    headers = {
+        "Authorization": f"Bearer {token}",
+        "Content-Type": "application/json",
+    }
+    return requests.request(
+        method,
+        url,
+        headers=headers,
+        params=params,
+        json=json_body,
+        timeout=8,
+    )
+
+
+def _vercel_upsert_env(key: str, value: str) -> tuple[bool, str]:
+    """Create or update a Vercel project env var. Returns (ok, message)."""
+    creds = _vercel_creds()
+    if creds is None:
+        return False, "Vercel credentials not configured."
+    _, project_id, _, targets = creds
+
+    # 1) See if the env var already exists.
+    try:
+        listing = _vercel_api(
+            "GET", f"/v9/projects/{project_id}/env", params={"decrypt": "false"}
+        )
+    except requests.RequestException as e:
+        return False, f"List env failed: {e}"
+    if listing.status_code != 200:
+        return False, f"List env failed: HTTP {listing.status_code} — {listing.text[:200]}"
+    existing = next(
+        (e for e in listing.json().get("envs", []) if e.get("key") == key),
+        None,
+    )
+
+    payload = {
+        "key": key,
+        "value": value,
+        "type": "encrypted",
+        "target": targets,
+    }
+
+    if existing:
+        try:
+            r = _vercel_api(
+                "PATCH",
+                f"/v9/projects/{project_id}/env/{existing['id']}",
+                json_body={
+                    "value": value,
+                    "target": targets,
+                    "type": "encrypted",
+                },
+            )
+        except requests.RequestException as e:
+            return False, f"Update env failed: {e}"
+    else:
+        try:
+            r = _vercel_api(
+                "POST",
+                f"/v10/projects/{project_id}/env",
+                json_body=payload,
+                params={"upsert": "true"},
+            )
+        except requests.RequestException as e:
+            return False, f"Create env failed: {e}"
+
+    if 200 <= r.status_code < 300:
+        return True, "ok"
+    return False, f"HTTP {r.status_code} — {r.text[:300]}"
+
+
+def _vercel_trigger_redeploy() -> tuple[bool, str]:
+    """Redeploy the latest production deployment so the new env var
+    actually takes effect."""
+    creds = _vercel_creds()
+    if creds is None:
+        return False, "Vercel credentials not configured."
+    _, project_id, _, _ = creds
+
+    # Find the most recent production deployment so we can redeploy it.
+    try:
+        listing = _vercel_api(
+            "GET",
+            "/v6/deployments",
+            params={"projectId": project_id, "limit": 1, "target": "production"},
+        )
+    except requests.RequestException as e:
+        return False, f"List deployments failed: {e}"
+    if listing.status_code != 200:
+        return False, f"List deployments failed: HTTP {listing.status_code}"
+
+    deps = listing.json().get("deployments") or []
+    if not deps:
+        return False, "No production deployments found yet — push to Git first."
+    latest = deps[0]
+
+    name = latest.get("name") or "admin-panel"
+    body = {
+        "name": name,
+        "deploymentId": latest.get("uid"),
+        "target": "production",
+    }
+    try:
+        r = _vercel_api("POST", "/v13/deployments", json_body=body)
+    except requests.RequestException as e:
+        return False, f"Redeploy request failed: {e}"
+
+    if 200 <= r.status_code < 300:
+        data = r.json()
+        return True, data.get("url") or "redeploy queued"
+    return False, f"HTTP {r.status_code} — {r.text[:300]}"
+
+
+@app.route("/api/config", methods=["GET"])
+def api_config_get():
+    _maybe_reload_config()
+    if not _check_password():
+        return _unauthorized()
+
+    creds = _vercel_creds()
+    return jsonify(
+        {
+            "status": "success",
+            "config": _redact_config(CONFIG),
+            "source": "env" if (
+                os.environ.get("ADMIN_CONFIG_JSON")
+                or os.environ.get("ADMIN_CONFIG_B64")
+            ) else "file",
+            "vercelSync": creds is not None,
+            "missingVercelKeys": [
+                k for k in ("VERCEL_TOKEN", "VERCEL_PROJECT_ID")
+                if not os.environ.get(k)
+            ],
+        }
+    ), 200
+
+
+@app.route("/api/config", methods=["POST"])
+def api_config_save():
+    _maybe_reload_config()
+    if not _check_password():
+        return _unauthorized()
+
+    body = request.get_json(silent=True) or {}
+    incoming = body.get("config")
+    if not isinstance(incoming, dict):
+        return jsonify({"status": "error", "message": "Missing `config` object."}), 400
+
+    # Replace mask values with originals before validating / saving.
+    merged = _merge_unmasked(CONFIG if isinstance(CONFIG, dict) else {}, incoming)
+    ok, msg = _validate_config(merged)
+    if not ok:
+        return jsonify({"status": "error", "message": msg}), 400
+
+    serialized = json.dumps(merged, separators=(",", ":"))
+
+    creds = _vercel_creds()
+    if creds is not None:
+        # Push to Vercel as ADMIN_CONFIG_JSON, then trigger redeploy.
+        ok_env, env_msg = _vercel_upsert_env("ADMIN_CONFIG_JSON", serialized)
+        if not ok_env:
+            return jsonify(
+                {
+                    "status": "error",
+                    "message": f"Failed to update Vercel env: {env_msg}",
+                }
+            ), 502
+
+        ok_dep, dep_msg = _vercel_trigger_redeploy()
+        if not ok_dep:
+            # Env var was saved, but redeploy didn't queue. The user can
+            # still trigger a redeploy manually.
+            return jsonify(
+                {
+                    "status": "partial",
+                    "message": (
+                        "Config saved to Vercel but redeploy failed: "
+                        + dep_msg
+                        + ". Trigger a redeploy manually to apply changes."
+                    ),
+                }
+            ), 200
+
+        return jsonify(
+            {
+                "status": "success",
+                "message": "Config saved. New deployment queued — refresh in ~30s.",
+                "deployment": dep_msg,
+                "panels": len(merged.get("panels") or []),
+            }
+        ), 200
+
+    # No Vercel creds → write to disk (works on local / VPS / Docker).
+    try:
+        CONFIG_PATH.write_text(
+            json.dumps(merged, indent=4, ensure_ascii=False),
+            encoding="utf-8",
+        )
+    except OSError as e:
+        return jsonify(
+            {
+                "status": "error",
+                "message": (
+                    f"Failed to write {CONFIG_PATH.name}: {e}. "
+                    "On serverless hosts the filesystem is read-only — "
+                    "set VERCEL_TOKEN + VERCEL_PROJECT_ID to enable env-var sync."
+                ),
+            }
+        ), 500
+
+    # Hot-reload picks it up next request anyway, but update in-memory now.
+    global CONFIG
+    CONFIG = merged
+    return jsonify(
+        {
+            "status": "success",
+            "message": "Config saved to disk.",
+            "panels": len(merged.get("panels") or []),
+        }
+    ), 200
 
 
 # ---------------------------------------------------------------------------

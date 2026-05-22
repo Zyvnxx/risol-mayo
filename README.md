@@ -170,6 +170,32 @@ To change panels later: edit `ADMIN_CONFIG_JSON` in Vercel's project
 settings and trigger a redeploy. Vercel does not pick up env-var changes
 on running instances without a redeploy.
 
+#### In-browser config editor on Vercel
+
+The Settings button in the header opens a config editor that can update
+panels directly from the browser. Saving will:
+1. Patch the `ADMIN_CONFIG_JSON` env var in your Vercel project, then
+2. Trigger a production redeploy so the new config takes effect (~30s).
+
+API keys are masked in the form (shown as `********`); leaving them
+masked keeps the original value, so you can edit names/URLs without
+re-typing keys.
+
+To enable this, add three more env vars in Vercel:
+
+| Variable             | Where to find it                                                  |
+|----------------------|-------------------------------------------------------------------|
+| `VERCEL_TOKEN`       | https://vercel.com/account/tokens — create a personal access token |
+| `VERCEL_PROJECT_ID`  | Project Settings → General → "Project ID"                          |
+| `VERCEL_TEAM_ID`     | Only required if the project lives in a Team (Team Settings → "Team ID") |
+
+Without these, the editor still loads (read-only) but Save fails with
+a clear message. Without `VERCEL_TOKEN` no env-var changes are possible.
+
+The token only needs the default scopes. Treat it like a credential —
+anyone with this token can modify your Vercel project. Restrict its
+expiration to whatever you're comfortable with.
+
 #### Vercel files
 
 - `vercel.json` — runtime config, declares `index.py` as the
