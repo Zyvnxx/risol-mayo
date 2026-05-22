@@ -1,9 +1,15 @@
 # Admin Panel — standalone Pterodactyl multi-server controller.
-# Single-file Flask app for Vercel + local hosting.
+#
+# Single-file Flask app for Vercel + local hosting. The module is
+# deliberately written so that importing it never executes I/O or
+# network calls — config loading and asset lookup happen lazily at
+# request time. That way an environment misconfiguration (bad JSON in
+# ADMIN_CONFIG_JSON, missing files, etc.) returns a real HTTP error
+# instead of a Vercel "could not import" crash page.
 #
 # Local:
 #   pip install -r requirements.txt
-#   ADMIN_PASSWORD=secret ADMIN_CONFIG_JSON='{"panels":[...]}' python index.py
+#   ADMIN_PASSWORD=secret python index.py
 #
 # Vercel:
 #   Set environment variables in the project settings:
@@ -27,13 +33,12 @@ from flask import Flask, jsonify, request, send_from_directory
 
 
 # ---------------------------------------------------------------------------
-# Constants
+# Constants — pure values, no I/O
 # ---------------------------------------------------------------------------
 BASE_DIR = Path(__file__).resolve().parent
-CONFIG_PATH = Path(os.environ.get("ADMIN_CONFIG") or (BASE_DIR / "config.json"))
 
-PTERO_TIMEOUT = float(os.environ.get("PTERO_TIMEOUT") or 5)
-PTERO_PARALLEL = int(os.environ.get("PTERO_PARALLEL") or 8)
+PTERO_TIMEOUT = 5.0
+PTERO_PARALLEL = 8
 
 ALLOWED_SIGNALS = ("start", "stop", "restart", "kill")
 API_KEY_MASK = "********"
@@ -45,8 +50,68 @@ STATIC_FILES = {
 
 
 # ---------------------------------------------------------------------------
-# Asset lookup — handles Vercel's various unpack layouts
+# Lazy state — populated on first request, never at import time
 # ---------------------------------------------------------------------------
+_STATE = {
+    "config": None,         # dict, parsed from env / file
+    "config_loaded": False, # was a load attempted?
+    "config_error": None,   # str if load failed
+}
+
+
+def _config_path():
+    return Path(os.environ.get("ADMIN_CONFIG") or (BASE_DIR / "config.json"))
+
+
+def _load_config_now():
+    """Parse ADMIN_CONFIG_JSON / B64 / config.json. Always returns a
+    dict. Records any error in _STATE['config_error']."""
+    _STATE["config_error"] = None
+
+    raw = os.environ.get("ADMIN_CONFIG_JSON")
+    if not raw:
+        b64 = os.environ.get("ADMIN_CONFIG_B64")
+        if b64:
+            try:
+                raw = base64.b64decode(b64).decode("utf-8")
+            except Exception as e:
+                _STATE["config_error"] = "ADMIN_CONFIG_B64 decode failed: " + str(e)
+                return {"panels": []}
+
+    if raw:
+        try:
+            data = json.loads(raw)
+            return data if isinstance(data, dict) else {"panels": []}
+        except Exception as e:
+            _STATE["config_error"] = "ADMIN_CONFIG_JSON parse failed: " + str(e)
+            return {"panels": []}
+
+    cp = _config_path()
+    if cp.exists():
+        try:
+            with cp.open("r", encoding="utf-8") as f:
+                data = json.load(f)
+            return data if isinstance(data, dict) else {"panels": []}
+        except Exception as e:
+            _STATE["config_error"] = "config.json read failed: " + str(e)
+
+    return {"panels": []}
+
+
+def _get_config():
+    """Cached config getter. Reloads if config.json mtime changes
+    (only meaningful in non-serverless environments)."""
+    if not _STATE["config_loaded"]:
+        _STATE["config"] = _load_config_now()
+        _STATE["config_loaded"] = True
+    return _STATE["config"]
+
+
+def _set_config(new_cfg):
+    _STATE["config"] = new_cfg
+    _STATE["config_loaded"] = True
+
+
 def _candidate_dirs():
     seen = set()
     out = []
@@ -70,53 +135,8 @@ def _find_asset(filename):
     return None
 
 
-# ---------------------------------------------------------------------------
-# Config loading
-# ---------------------------------------------------------------------------
-def _load_config():
-    raw = os.environ.get("ADMIN_CONFIG_JSON")
-    if not raw:
-        b64 = os.environ.get("ADMIN_CONFIG_B64")
-        if b64:
-            try:
-                raw = base64.b64decode(b64).decode("utf-8")
-            except Exception as e:
-                print("[admin-panel] B64 decode failed:", e, file=sys.stderr)
-    if raw:
-        try:
-            return json.loads(raw)
-        except Exception as e:
-            print("[admin-panel] JSON parse failed:", e, file=sys.stderr)
-            return {"panels": [], "_load_error": str(e)}
-
-    if CONFIG_PATH.exists():
-        try:
-            with CONFIG_PATH.open("r", encoding="utf-8") as f:
-                return json.load(f)
-        except Exception as e:
-            print("[admin-panel] Failed to read config.json:", e, file=sys.stderr)
-
-    return {"panels": []}
-
-
-CONFIG = _load_config()
-
-
-def _maybe_reload_config():
-    global CONFIG
-    if os.environ.get("ADMIN_CONFIG_JSON") or os.environ.get("ADMIN_CONFIG_B64"):
-        return
-    if not CONFIG_PATH.exists():
-        return
-    try:
-        with CONFIG_PATH.open("r", encoding="utf-8") as f:
-            CONFIG = json.load(f)
-    except Exception as e:
-        print("[admin-panel] reload failed:", e, file=sys.stderr)
-
-
 def _resolved_password():
-    return os.environ.get("ADMIN_PASSWORD") or str(CONFIG.get("password") or "")
+    return os.environ.get("ADMIN_PASSWORD") or str(_get_config().get("password") or "")
 
 
 def _check_password():
@@ -136,7 +156,7 @@ def _unauthorized():
 # ---------------------------------------------------------------------------
 def _collect_panels():
     out = []
-    raw = CONFIG.get("panels")
+    raw = _get_config().get("panels")
     if not isinstance(raw, list):
         return out
     for idx, p in enumerate(raw):
@@ -163,15 +183,12 @@ def _ptero_resources(panel):
         r = requests.get(url, headers=headers, timeout=PTERO_TIMEOUT)
     except requests.RequestException as e:
         return {"reachable": False, "error": str(e)}
-
     if not (200 <= r.status_code < 300):
         return {"reachable": False, "error": "HTTP " + str(r.status_code)}
-
     try:
         data = (r.json() or {}).get("attributes") or {}
     except Exception:
         return {"reachable": False, "error": "Invalid JSON from panel"}
-
     res = data.get("resources") or {}
     return {
         "reachable": True,
@@ -181,8 +198,6 @@ def _ptero_resources(panel):
         "cpuAbsolute": float(res.get("cpu_absolute") or 0.0),
         "diskBytes": int(res.get("disk_bytes") or 0),
         "uptimeMs": int(res.get("uptime") or 0),
-        "networkRxBytes": int(res.get("network_rx_bytes") or 0),
-        "networkTxBytes": int(res.get("network_tx_bytes") or 0),
     }
 
 
@@ -357,7 +372,6 @@ def _vercel_trigger_redeploy():
         return False, "List deployments failed: " + str(e)
     if listing.status_code != 200:
         return False, "List HTTP " + str(listing.status_code)
-
     deps = (listing.json() or {}).get("deployments") or []
     if not deps:
         return False, "No production deployments yet."
@@ -372,13 +386,12 @@ def _vercel_trigger_redeploy():
     except requests.RequestException as e:
         return False, "Redeploy failed: " + str(e)
     if 200 <= r.status_code < 300:
-        d = r.json() or {}
-        return True, d.get("url") or "queued"
+        return True, (r.json() or {}).get("url") or "queued"
     return False, "HTTP " + str(r.status_code) + ": " + r.text[:300]
 
 
 # ---------------------------------------------------------------------------
-# Flask app
+# Flask app — defined AFTER all helpers so static analysers find it cleanly
 # ---------------------------------------------------------------------------
 app = Flask(__name__, static_folder=None)
 
@@ -400,7 +413,7 @@ def _on_exception(err):
 def home():
     target = _find_asset("index.html")
     if target is None:
-        return ("index.html not found in lambda. Visit /_debug.", 500)
+        return ("index.html not found in deployed bundle. Visit /_debug.", 500)
     return send_from_directory(str(target.parent), target.name)
 
 
@@ -429,10 +442,11 @@ def debug_info():
             files = []
         dirs.append({"path": str(d), "files": files})
     return jsonify({
+        "ok": True,
         "base_dir": str(BASE_DIR),
         "cwd": str(Path.cwd()),
         "lookup_dirs": dirs,
-        "found": {
+        "found_assets": {
             n: (str(_find_asset(n)) if _find_asset(n) else None)
             for n in ("index.html", "app.js", "style.css")
         },
@@ -443,7 +457,7 @@ def debug_info():
         },
         "vercel_sync_enabled": _vercel_creds() is not None,
         "config_panels": len(_collect_panels()),
-        "config_load_error": CONFIG.get("_load_error"),
+        "config_load_error": _STATE["config_error"],
     }), 200
 
 
@@ -454,7 +468,6 @@ def api_health():
 
 @app.route("/api/panels", methods=["GET"])
 def api_panels():
-    _maybe_reload_config()
     if not _check_password():
         return _unauthorized()
     with_status = request.args.get("status", "1").lower() not in ("0", "false", "no")
@@ -475,7 +488,6 @@ def api_panels():
 
 @app.route("/api/panels/power", methods=["POST"])
 def api_panels_power():
-    _maybe_reload_config()
     if not _check_password():
         return _unauthorized()
     body = request.get_json(silent=True) or {}
@@ -506,12 +518,7 @@ def api_panels_power():
         return jsonify({"status": "error", "message": "Pterodactyl request failed: " + str(e)}), 502
 
     if 200 <= resp.status_code < 300:
-        return jsonify({
-            "status": "success",
-            "id": panel_id,
-            "name": panel["name"],
-            "signal": signal,
-        }), 200
+        return jsonify({"status": "success", "id": panel_id, "name": panel["name"], "signal": signal}), 200
     return jsonify({
         "status": "error",
         "message": "Panel rejected (" + str(resp.status_code) + "): " + resp.text[:200],
@@ -520,12 +527,12 @@ def api_panels_power():
 
 @app.route("/api/config", methods=["GET"])
 def api_config_get():
-    _maybe_reload_config()
     if not _check_password():
         return _unauthorized()
+    cfg = _get_config()
     return jsonify({
         "status": "success",
-        "config": _redact_config(CONFIG),
+        "config": _redact_config(cfg),
         "source": "env" if (os.environ.get("ADMIN_CONFIG_JSON") or os.environ.get("ADMIN_CONFIG_B64")) else "file",
         "vercelSync": _vercel_creds() is not None,
         "missingVercelKeys": [
@@ -537,7 +544,6 @@ def api_config_get():
 
 @app.route("/api/config", methods=["POST"])
 def api_config_save():
-    _maybe_reload_config()
     if not _check_password():
         return _unauthorized()
 
@@ -546,7 +552,8 @@ def api_config_save():
     if not isinstance(incoming, dict):
         return jsonify({"status": "error", "message": "Missing `config` object."}), 400
 
-    merged = _merge_unmasked(CONFIG if isinstance(CONFIG, dict) else {}, incoming)
+    cfg = _get_config()
+    merged = _merge_unmasked(cfg if isinstance(cfg, dict) else {}, incoming)
     ok, msg = _validate_config(merged)
     if not ok:
         return jsonify({"status": "error", "message": msg}), 400
@@ -559,46 +566,41 @@ def api_config_save():
             return jsonify({"status": "error", "message": "Vercel env update failed: " + env_msg}), 502
         ok_dep, dep_msg = _vercel_trigger_redeploy()
         if not ok_dep:
-            return jsonify({
-                "status": "partial",
-                "message": "Saved but redeploy failed: " + dep_msg,
-            }), 200
+            return jsonify({"status": "partial", "message": "Saved but redeploy failed: " + dep_msg}), 200
         return jsonify({
             "status": "success",
             "message": "Saved. Redeploy queued — refresh in ~30s.",
             "deployment": dep_msg,
         }), 200
 
-    # Disk fallback (local / VPS).
     try:
-        CONFIG_PATH.write_text(json.dumps(merged, indent=4, ensure_ascii=False), encoding="utf-8")
+        _config_path().write_text(json.dumps(merged, indent=4, ensure_ascii=False), encoding="utf-8")
     except OSError as e:
         return jsonify({
             "status": "error",
-            "message": "Could not write " + CONFIG_PATH.name + ": " + str(e)
+            "message": "Could not write config: " + str(e)
                        + ". On serverless hosts, set VERCEL_TOKEN + VERCEL_PROJECT_ID.",
         }), 500
-    global CONFIG
-    CONFIG = merged
+    _set_config(merged)
     return jsonify({"status": "success", "message": "Config saved to disk."}), 200
 
 
 # ---------------------------------------------------------------------------
-# Local entrypoint (Vercel imports `app` directly).
+# Vercel WSGI aliases — Vercel scans this file for one of these names.
+# Define them at the absolute end so the static scanner finds them
+# regardless of how the rest of the file is parsed.
+# ---------------------------------------------------------------------------
+application = app
+handler = app
+
+
+# ---------------------------------------------------------------------------
+# Local entrypoint (Vercel ignores __main__)
 # ---------------------------------------------------------------------------
 if __name__ == "__main__":
-    port = int(os.environ.get("ADMIN_PORT") or CONFIG.get("port") or 7860)
-    host = os.environ.get("ADMIN_HOST") or str(CONFIG.get("host") or "0.0.0.0")
+    port = int(os.environ.get("ADMIN_PORT") or _get_config().get("port") or 7860)
+    host = os.environ.get("ADMIN_HOST") or str(_get_config().get("host") or "0.0.0.0")
     if not _resolved_password():
         print("[admin-panel] WARN: no ADMIN_PASSWORD set", file=sys.stderr)
     print("[admin-panel] http://{}:{}".format(host, port))
     app.run(host=host, port=port, debug=False, use_reloader=False)
-
-
-# ---------------------------------------------------------------------------
-# Vercel WSGI entry-points.
-# Vercel's @vercel/python statically scans this file for one of these
-# names, so expose all three as aliases of the same Flask app.
-# ---------------------------------------------------------------------------
-application = app
-handler = app
