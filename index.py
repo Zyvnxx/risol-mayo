@@ -593,3 +593,12 @@ if __name__ == "__main__":
         print("[admin-panel] WARN: no ADMIN_PASSWORD set", file=sys.stderr)
     print("[admin-panel] http://{}:{}".format(host, port))
     app.run(host=host, port=port, debug=False, use_reloader=False)
+
+
+# ---------------------------------------------------------------------------
+# Vercel WSGI entry-points.
+# Vercel's @vercel/python statically scans this file for one of these
+# names, so expose all three as aliases of the same Flask app.
+# ---------------------------------------------------------------------------
+application = app
+handler = app
