@@ -48,6 +48,13 @@ body {
     -webkit-font-smoothing: antialiased;
     -moz-osx-font-smoothing: grayscale;
     line-height: 1.5;
+    /* Respect iOS safe areas (notch / home indicator). */
+    padding-top: env(safe-area-inset-top, 0px);
+    padding-bottom: env(safe-area-inset-bottom, 0px);
+    padding-left: env(safe-area-inset-left, 0px);
+    padding-right: env(safe-area-inset-right, 0px);
+    /* Prevent text resizing in landscape on iOS. */
+    -webkit-text-size-adjust: 100%;
 }
 
 .adm-hidden { display: none !important; }
@@ -514,13 +521,101 @@ code {
 }
 
 /* ============ RESPONSIVE ============ */
+/* Tablet ≤ 900px */
+@media (max-width: 900px) {
+    .adm-main { padding: 18px 16px; gap: 14px; }
+    .adm-grid { grid-template-columns: repeat(auto-fit, minmax(280px, 1fr)); }
+}
+
+/* Phone ≤ 720px */
 @media (max-width: 720px) {
-    .adm-main { padding: 16px; }
-    .adm-topbar { padding: 10px 14px; gap: 10px; }
+    .adm-topbar {
+        padding: 10px 14px;
+        gap: 10px;
+        flex-wrap: wrap;
+    }
+    .adm-brand { gap: 10px; flex: 1 1 auto; min-width: 0; }
+    .adm-brand-mark { width: 34px; height: 34px; font-size: 16px; }
+    .adm-brand-title { font-size: 15px; }
     .adm-brand-sub { display: none; }
+
+    .adm-status-pill {
+        order: 3;
+        width: 100%;
+        justify-content: center;
+        margin-top: 4px;
+    }
+
+    .adm-actions { gap: 6px; }
+    .adm-actions .adm-btn {
+        padding: 8px 10px;
+        min-width: 40px;
+        justify-content: center;
+    }
+    /* Hide button labels on phone, keep only icon */
     .adm-actions .adm-btn span:nth-child(2) { display: none; }
-    .adm-card-stats,
-    .adm-card-actions { grid-template-columns: repeat(2, 1fr); }
+    .adm-actions .adm-btn span:first-child { font-size: 14px; }
+
+    .adm-summary {
+        grid-template-columns: repeat(2, 1fr);
+        gap: 10px;
+    }
+    .adm-stat { padding: 12px 14px; }
+    .adm-stat-value { font-size: 22px; }
+
+    .adm-bulk {
+        padding: 14px;
+        gap: 12px;
+        flex-direction: column;
+        align-items: stretch;
+    }
+    .adm-bulk-info { text-align: center; }
+    .adm-bulk-actions {
+        display: grid;
+        grid-template-columns: repeat(3, 1fr);
+        gap: 6px;
+    }
+    .adm-bulk-actions .adm-btn {
+        padding: 10px 6px;
+        font-size: 12px;
+        justify-content: center;
+        min-height: 40px;
+    }
+
+    .adm-grid { grid-template-columns: 1fr; gap: 12px; }
+    .adm-card { padding: 14px; gap: 10px; }
+    .adm-card-title h3 { font-size: 14.5px; }
+    .adm-card-stats { grid-template-columns: repeat(2, 1fr); }
+    .adm-card-stat { padding: 10px 6px; }
+    .adm-card-actions {
+        grid-template-columns: repeat(2, 1fr);
+        gap: 6px;
+    }
+    .adm-card-actions .adm-btn {
+        padding: 10px 6px;
+        font-size: 12px;
+        min-height: 42px;
+    }
+
+    .adm-toast {
+        top: auto;
+        bottom: 16px;
+        max-width: calc(100vw - 24px);
+        font-size: 12px;
+        padding: 10px 14px;
+    }
+    @keyframes adm-toast-in {
+        from { opacity: 0; transform: translate(-50%, 8px); }
+        to   { opacity: 1; transform: translate(-50%, 0); }
+    }
+}
+
+/* Small phone ≤ 380px */
+@media (max-width: 380px) {
+    .adm-main { padding: 14px 12px; }
+    .adm-card-actions .adm-btn span:nth-child(2) { display: none; }
+    .adm-card-actions .adm-btn { padding: 12px 4px; }
+    .adm-stat-value { font-size: 20px; }
 }
 
 @media (prefers-reduced-motion: reduce) {
@@ -710,11 +805,13 @@ code {
     color: var(--adm-text-0);
     border: 1px solid var(--adm-border);
     border-radius: 8px;
-    padding: 8px 10px;
+    padding: 10px 12px;
     font-family: inherit;
-    font-size: 13px;
+    /* 16px prevents iOS Safari from auto-zooming when an input is focused. */
+    font-size: 16px;
     width: 100%;
     min-width: 0;
+    min-height: 42px;
     transition: border 0.12s ease, background 0.12s ease;
 }
 .adm-field-input:focus {
@@ -724,7 +821,7 @@ code {
 }
 .adm-field-input.mono {
     font-family: var(--adm-mono);
-    font-size: 12px;
+    font-size: 14px;
 }
 .adm-field-input.is-masked { color: var(--adm-text-3); font-style: italic; }
 
@@ -735,6 +832,49 @@ code {
     padding: 14px 22px;
     border-top: 1px solid var(--adm-border);
     background: rgba(0, 0, 0, 0.24);
+    flex-wrap: wrap;
+}
+
+/* Settings modal — responsive */
+@media (max-width: 720px) {
+    .adm-modal { padding: 0; }
+    .adm-modal-card {
+        width: 100%;
+        max-height: 100vh;
+        max-height: 100dvh;
+        height: 100vh;
+        height: 100dvh;
+        border-radius: 0;
+        border-left: 0;
+        border-right: 0;
+    }
+    .adm-modal-header { padding: 14px 16px; }
+    .adm-modal-title { font-size: 17px; }
+    .adm-modal-body { padding: 14px 16px; }
+    .adm-modal-footer {
+        padding: 12px 16px;
+        flex-direction: column-reverse;
+        gap: 8px;
+    }
+    .adm-modal-footer .adm-btn {
+        width: 100%;
+        justify-content: center;
+        min-height: 44px;
+    }
+
+    .adm-settings-toolbar {
+        flex-wrap: wrap;
+        gap: 10px;
+    }
+    .adm-settings-toolbar-right { width: 100%; }
+    .adm-settings-toolbar-right .adm-btn {
+        width: 100%;
+        justify-content: center;
+        min-height: 40px;
+    }
+
+    .adm-settings-row { grid-template-columns: 1fr; padding: 14px; }
+    .adm-settings-row-remove { padding: 6px 12px; min-height: 32px; }
 }
 
 @media (max-width: 600px) {
