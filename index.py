@@ -44,8 +44,10 @@ ALLOWED_SIGNALS = ("start", "stop", "restart", "kill")
 API_KEY_MASK = "********"
 
 STATIC_FILES = {
-    "app.js":   "application/javascript; charset=utf-8",
-    "style.css": "text/css; charset=utf-8",
+    "app.js":       "application/javascript; charset=utf-8",
+    "style.css":    "text/css; charset=utf-8",
+    "customer.js":  "application/javascript; charset=utf-8",
+    "customer.css": "text/css; charset=utf-8",
 }
 
 
@@ -169,6 +171,7 @@ def _collect_panels():
             "panelUrl": str(p.get("panelUrl") or "").rstrip("/"),
             "serverId": str(p.get("serverId") or "").strip(),
             "clientApiKey": str(p.get("clientApiKey") or "").strip(),
+            "customerToken": str(p.get("customerToken") or "").strip(),
         })
     return out
 
@@ -226,8 +229,11 @@ def _redact_config(cfg):
     panels = out.get("panels")
     if isinstance(panels, list):
         for p in panels:
-            if isinstance(p, dict) and p.get("clientApiKey"):
-                p["clientApiKey"] = API_KEY_MASK
+            if isinstance(p, dict):
+                if p.get("clientApiKey"):
+                    p["clientApiKey"] = API_KEY_MASK
+                if p.get("customerToken"):
+                    p["customerToken"] = API_KEY_MASK
     return out
 
 
@@ -583,6 +589,120 @@ def api_config_save():
         }), 500
     _set_config(merged)
     return jsonify({"status": "success", "message": "Config saved to disk."}), 200
+
+
+# ---------------------------------------------------------------------------
+# Customer portal — token-scoped self-service for a single panel
+# ---------------------------------------------------------------------------
+#
+# Each panel can be assigned a ``customerToken`` (see admin Settings).
+# A customer presents that token in the ``customer-token`` request
+# header and only sees / controls the panel that owns the token.
+# Tokens are matched in constant time to avoid leaking which token
+# values exist.
+
+def _customer_token_from_request():
+    return (request.headers.get("customer-token") or "").strip()
+
+
+def _resolve_customer_panel(token):
+    """Find the single panel that this customer token belongs to.
+
+    Returns the raw panel dict (with secrets) or None. Comparisons use
+    secrets.compare_digest to avoid timing leaks."""
+    if not token:
+        return None
+    for p in _collect_panels():
+        ct = p.get("customerToken") or ""
+        if not ct:
+            continue
+        # Length-equal check first to keep compare_digest happy on
+        # different lengths.
+        if secrets.compare_digest(str(token), str(ct)):
+            return p
+    return None
+
+
+def _customer_safe_view(panel, with_status):
+    """Public-safe view of a panel for a customer.
+
+    The customer never sees the panel's API key, the customer token,
+    or the raw panel URL (we trim it to the host so they can verify
+    it's their server without learning the panel's full structure)."""
+    base = _safe_view(panel, with_status=with_status)
+    # Strip secrets that should never reach the customer browser.
+    base.pop("panelUrl", None)
+    return base
+
+
+@app.route("/customer")
+def customer_home():
+    target = _find_asset("customer.html")
+    if target is None:
+        return ("customer.html not found in deployed bundle.", 500)
+    return send_from_directory(str(target.parent), target.name)
+
+
+@app.route("/api/customer/me", methods=["GET"])
+def api_customer_me():
+    """Return the panel that the presented token owns, with live status."""
+    token = _customer_token_from_request()
+    panel = _resolve_customer_panel(token)
+    if panel is None:
+        return jsonify({"status": "error", "message": "Invalid token"}), 401
+
+    return jsonify({
+        "status": "success",
+        "panel": _customer_safe_view(panel, with_status=True),
+        "ts": int(time.time()),
+    }), 200
+
+
+@app.route("/api/customer/power", methods=["POST"])
+def api_customer_power():
+    """Send a power signal to the panel owned by the presented token.
+
+    Customers cannot specify which panel to act on — we look it up
+    from the token, so they can only ever control their own server."""
+    token = _customer_token_from_request()
+    panel = _resolve_customer_panel(token)
+    if panel is None:
+        return jsonify({"status": "error", "message": "Invalid token"}), 401
+
+    body = request.get_json(silent=True) or {}
+    signal = str(body.get("signal") or "").lower()
+    if signal not in ALLOWED_SIGNALS:
+        return jsonify({"status": "error", "message": "Invalid signal."}), 400
+
+    if not (panel["panelUrl"] and panel["serverId"] and panel["clientApiKey"]):
+        return jsonify({"status": "error", "message": "Panel not configured."}), 400
+
+    target = "{}/api/client/servers/{}/power".format(panel["panelUrl"], panel["serverId"])
+    try:
+        resp = requests.post(
+            target,
+            headers={
+                "Authorization": "Bearer " + panel["clientApiKey"],
+                "Accept": "application/json",
+                "Content-Type": "application/json",
+            },
+            json={"signal": signal},
+            timeout=PTERO_TIMEOUT,
+        )
+    except requests.RequestException as e:
+        return jsonify({"status": "error", "message": "Pterodactyl request failed: " + str(e)}), 502
+
+    if 200 <= resp.status_code < 300:
+        return jsonify({
+            "status": "success",
+            "id": panel["id"],
+            "name": panel["name"],
+            "signal": signal,
+        }), 200
+    return jsonify({
+        "status": "error",
+        "message": "Panel rejected (" + str(resp.status_code) + "): " + resp.text[:200],
+    }), 502
 
 
 # ---------------------------------------------------------------------------

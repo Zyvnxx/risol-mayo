@@ -366,6 +366,7 @@ Self-contained: no shared global state, IIFE wrapper.
         { key: "panelUrl",      label: "Panel URL",    required: true,  wide: true,   placeholder: "https://panel.example.com", mono: true },
         { key: "serverId",      label: "Server ID",    required: true,                placeholder: "abcd1234", mono: true },
         { key: "clientApiKey",  label: "Client API Key", required: true, mono: true,  placeholder: "ptlc_xxx", masked: true },
+        { key: "customerToken", label: "Customer Token", required: false, wide: true, mono: true, placeholder: "(optional, give to customer for /customer login)", masked: true },
     ];
 
     let __configState = null;       // current edited config snapshot

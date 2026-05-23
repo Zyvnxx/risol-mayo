@@ -1,0 +1,92 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="utf-8">
+    <meta http-equiv="X-UA-Compatible" content="IE=edge">
+    <title>My Server</title>
+    <meta name="description" content="Self-service Pterodactyl control">
+    <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+    <meta name="theme-color" content="#06060d">
+    <meta name="apple-mobile-web-app-capable" content="yes">
+    <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
+    <link rel="stylesheet"
+          href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700;800&display=swap">
+    <link rel="stylesheet" href="/style.css">
+    <link rel="stylesheet" href="/customer.css">
+    <script defer src="/customer.js"></script>
+</head>
+<body>
+
+<!-- ============ TOP BAR ============ -->
+<header class="adm-topbar">
+    <div class="adm-brand">
+        <div class="adm-brand-mark">▦</div>
+        <div class="adm-brand-text">
+            <span class="adm-brand-title">My Server</span>
+            <span class="adm-brand-sub">Self-service control</span>
+        </div>
+    </div>
+    <div class="adm-status-pill" id="cust-status-pill">
+        <span class="adm-status-dot"></span>
+        <span id="cust-status-text">Connecting…</span>
+    </div>
+    <div class="adm-actions">
+        <button id="cust-refresh-btn" class="adm-btn adm-btn-ghost adm-hidden" type="button" title="Refresh">
+            <span>↺</span> Refresh
+        </button>
+        <button id="cust-logout-btn" class="adm-btn adm-btn-ghost adm-hidden" type="button" title="Sign out">
+            <span>⎋</span> Sign out
+        </button>
+    </div>
+</header>
+
+<!-- ============ TOAST ============ -->
+<div id="cust-toast" class="adm-toast adm-hidden" role="status">
+    <span id="cust-toast-text">—</span>
+</div>
+
+<main class="adm-main">
+
+    <!-- ===== LOGIN ===== -->
+    <section id="cust-login" class="cust-login adm-hidden">
+        <div class="cust-login-card">
+            <div class="cust-login-mark">▦</div>
+            <h1 class="cust-login-title">Welcome</h1>
+            <p class="cust-login-sub">
+                Enter the access token your administrator gave you to manage your server.
+            </p>
+
+            <form id="cust-login-form" class="cust-login-form" autocomplete="off">
+                <label class="adm-field adm-field-wide">
+                    <span class="adm-field-label">Access Token</span>
+                    <input id="cust-token-input"
+                           class="adm-field-input mono"
+                           type="password"
+                           placeholder="paste your token"
+                           required
+                           autocomplete="off"
+                           spellcheck="false">
+                </label>
+
+                <button class="adm-btn adm-btn-success cust-login-submit" type="submit">
+                    <span>→</span> Continue
+                </button>
+                <p class="cust-login-error adm-hidden" id="cust-login-error"></p>
+            </form>
+        </div>
+    </section>
+
+    <!-- ===== PANEL ===== -->
+    <section id="cust-panel-wrap" class="adm-hidden">
+        <div id="cust-panel" class="cust-panel">
+            <div class="adm-loading">Loading your server…</div>
+        </div>
+    </section>
+
+    <footer class="adm-footer">
+        <p>Self-service portal · Pterodactyl</p>
+    </footer>
+</main>
+
+</body>
+</html>
