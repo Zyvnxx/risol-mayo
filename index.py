@@ -65,6 +65,158 @@ def _config_path():
     return Path(os.environ.get("ADMIN_CONFIG") or (BASE_DIR / "config.json"))
 
 
+def _tokens_path():
+    """Locate the bot's tokens.txt.
+
+    Defaults to the file in the repo root (one level above the
+    admin-panel folder). Override with the TOKENS_FILE env var."""
+    env = os.environ.get("TOKENS_FILE")
+    if env:
+        return Path(env)
+    for root in (BASE_DIR.parent, BASE_DIR, Path.cwd()):
+        try:
+            cand = (root / "tokens.txt").resolve()
+        except Exception:
+            continue
+        if cand.is_file():
+            return cand
+    return (BASE_DIR.parent / "tokens.txt")
+
+
+def _read_token_lines():
+    """Return the raw lines of tokens.txt."""
+    p = _tokens_path()
+    if not p.is_file():
+        return []
+    try:
+        text = p.read_text(encoding="utf-8")
+    except OSError:
+        return []
+    return text.splitlines()
+
+
+def _parse_token_line(line):
+    """Split a tokens.txt line into (token, channelId)."""
+    parts = (line or "").strip().split()
+    token = parts[0] if len(parts) >= 1 else ""
+    channel = parts[1] if len(parts) >= 2 else ""
+    return token, channel
+
+
+def _mask_bot_token(token):
+    """Mask bot token showing only first 10 and last 4 chars."""
+    t = str(token or "")
+    if len(t) <= 16:
+        return API_KEY_MASK if t else ""
+    return t[:10] + "…" + t[-4:]
+
+
+def _write_token_line(line_no, token, channel):
+    """Replace the 1-based line_no in tokens.txt. Returns (ok, message)."""
+    if not isinstance(line_no, int) or line_no < 1:
+        return False, "Invalid token line."
+    token = str(token or "").strip()
+    channel = str(channel or "").strip()
+    if not token:
+        return False, "Token is required."
+    if " " in token or " " in channel:
+        return False, "Token / channel id cannot contain spaces."
+
+    lines = _read_token_lines()
+    while len(lines) < line_no:
+        lines.append("")
+    lines[line_no - 1] = (token + " " + channel).strip()
+
+    p = _tokens_path()
+    try:
+        p.write_text("\n".join(lines) + "\n", encoding="utf-8")
+    except OSError as e:
+        return False, "Could not write tokens.txt: " + str(e)
+    return True, "ok"
+
+
+def _tokens_path():
+    """Locate the bot's tokens.txt.
+
+    Defaults to the file in the repo root (one level above the
+    admin-panel folder). Override with the TOKENS_FILE env var when the
+    bot lives elsewhere."""
+    env = os.environ.get("TOKENS_FILE")
+    if env:
+        return Path(env)
+    # Prefer an existing tokens.txt in any sensible candidate dir.
+    for root in (BASE_DIR.parent, BASE_DIR, Path.cwd()):
+        try:
+            cand = (root / "tokens.txt").resolve()
+        except Exception:
+            continue
+        if cand.is_file():
+            return cand
+    return (BASE_DIR.parent / "tokens.txt")
+
+
+def _read_token_lines():
+    """Return the raw lines of tokens.txt (without trailing newlines).
+
+    Missing file yields an empty list rather than raising."""
+    p = _tokens_path()
+    if not p.is_file():
+        return []
+    try:
+        text = p.read_text(encoding="utf-8")
+    except OSError:
+        return []
+    # Keep all lines; splitlines() drops the trailing newline cleanly.
+    return text.splitlines()
+
+
+def _parse_token_line(line):
+    """Split a tokens.txt line into (token, channelId).
+
+    The bot reads each line as ``line.strip().split()`` where the first
+    field is the token and the second is the channel id."""
+    parts = (line or "").strip().split()
+    token = parts[0] if len(parts) >= 1 else ""
+    channel = parts[1] if len(parts) >= 2 else ""
+    return token, channel
+
+
+def _mask_token(token):
+    """Show only the first 6 and last 4 chars so a customer can verify
+    their token without it being fully exposed in the browser."""
+    t = str(token or "")
+    if len(t) <= 12:
+        return API_KEY_MASK if t else ""
+    return t[:6] + "…" + t[-4:]
+
+
+def _write_token_line(line_no, token, channel):
+    """Replace the 1-based ``line_no`` in tokens.txt with ``token
+    channel``. Pads the file with blank lines if it is shorter. Returns
+    (ok, message)."""
+    if not isinstance(line_no, int) or line_no < 1:
+        return False, "Invalid token line."
+    token = str(token or "").strip()
+    channel = str(channel or "").strip()
+    if not token:
+        return False, "Token is required."
+    if " " in token or " " in channel:
+        return False, "Token / channel id cannot contain spaces."
+
+    lines = _read_token_lines()
+    # Grow the list so index line_no-1 exists.
+    while len(lines) < line_no:
+        lines.append("")
+    lines[line_no - 1] = (token + " " + channel).strip()
+
+    p = _tokens_path()
+    try:
+        p.write_text("\n".join(lines) + "\n", encoding="utf-8")
+    except OSError as e:
+        return False, "Could not write tokens.txt: " + str(e)
+    return True, "ok"
+
+
 def _load_config_now():
     """Parse ADMIN_CONFIG_JSON / B64 / config.json. Always returns a
     dict. Records any error in _STATE['config_error']."""
@@ -172,6 +324,8 @@ def _collect_panels():
             "serverId": str(p.get("serverId") or "").strip(),
             "clientApiKey": str(p.get("clientApiKey") or "").strip(),
             "customerToken": str(p.get("customerToken") or "").strip(),
+            "expiresAt": p.get("expiresAt"),  # ISO date string e.g. "2025-07-15"
+            "tokenLine": p.get("tokenLine"),  # 1-based line number in tokens.txt
         })
     return out
 
@@ -632,6 +786,18 @@ def _customer_safe_view(panel, with_status):
     base = _safe_view(panel, with_status=with_status)
     # Strip secrets that should never reach the customer browser.
     base.pop("panelUrl", None)
+    # Add expiration info for countdown timer
+    base["expiresAt"] = panel.get("expiresAt")
+    # Add token line info (but not the actual token)
+    token_line = panel.get("tokenLine")
+    if token_line:
+        lines = _read_token_lines()
+        idx = int(token_line) - 1
+        if 0 <= idx < len(lines):
+            bot_token, channel_id = _parse_token_line(lines[idx])
+            base["botToken"] = _mask_bot_token(bot_token)
+            base["channelId"] = channel_id
+            base["tokenLine"] = token_line
     return base
 
 
@@ -703,6 +869,57 @@ def api_customer_power():
         "status": "error",
         "message": "Panel rejected (" + str(resp.status_code) + "): " + resp.text[:200],
     }), 502
+
+
+@app.route("/api/customer/token", methods=["POST"])
+def api_customer_token():
+    """Let a customer edit their own bot token / channel id.
+
+    The customer presents their ``customer-token`` header. We look up
+    which tokens.txt line their panel owns (``tokenLine``) and rewrite
+    only that line. They can never touch another customer's line."""
+    token = _customer_token_from_request()
+    panel = _resolve_customer_panel(token)
+    if panel is None:
+        return jsonify({"status": "error", "message": "Invalid token"}), 401
+
+    line_no = panel.get("tokenLine")
+    try:
+        line_no = int(line_no)
+    except (TypeError, ValueError):
+        line_no = 0
+    if line_no < 1:
+        return jsonify({
+            "status": "error",
+            "message": "No token line is assigned to this server. Contact admin.",
+        }), 400
+
+    body = request.get_json(silent=True) or {}
+    new_token = str(body.get("botToken") or "").strip()
+    new_channel = str(body.get("channelId") or "").strip()
+
+    # If the customer left the token masked/unchanged, keep the existing one.
+    lines = _read_token_lines()
+    idx = line_no - 1
+    cur_token, cur_channel = ("", "")
+    if 0 <= idx < len(lines):
+        cur_token, cur_channel = _parse_token_line(lines[idx])
+
+    if not new_token or new_token == _mask_bot_token(cur_token) or new_token == API_KEY_MASK:
+        new_token = cur_token
+    if not new_channel:
+        new_channel = cur_channel
+
+    ok, msg = _write_token_line(line_no, new_token, new_channel)
+    if not ok:
+        return jsonify({"status": "error", "message": msg}), 400
+
+    return jsonify({
+        "status": "success",
+        "message": "Token updated. Restart your server for it to take effect.",
+        "botToken": _mask_bot_token(new_token),
+        "channelId": new_channel,
+    }), 200
 
 
 # ---------------------------------------------------------------------------
