@@ -387,6 +387,19 @@ def _ptero_token_file(panel):
     return path
 
 
+def _effective_token_line(panel):
+    """1-based tokens.txt line this panel's customer manages.
+
+    Falls back to line 1 when the admin has not pinned a specific line,
+    so the editor is always usable by the customer."""
+    raw = panel.get("tokenLine")
+    try:
+        n = int(raw)
+    except (TypeError, ValueError):
+        return 1
+    return n if n >= 1 else 1
+
+
 def _ptero_read_token_lines(panel):
     """Read tokens.txt from the Pterodactyl server. Returns (lines, error).
 
@@ -857,20 +870,17 @@ def _customer_safe_view(panel, with_status):
     base.pop("panelUrl", None)
     # Add expiration info for countdown timer
     base["expiresAt"] = panel.get("expiresAt")
-    # Add token line info (but not the actual token). The editor shows
-    # whenever a tokenLine is configured. We read the current bot token /
-    # channel id from the Pterodactyl server itself (via the Client API),
-    # so it works regardless of where this panel is hosted.
-    token_line = panel.get("tokenLine")
-    if token_line not in (None, ""):
-        base["tokenLine"] = token_line
+    # Token editor: always available for a configured panel. If the admin
+    # did not pin a specific line, default to line 1 so the customer can
+    # set up their own bot token / channel id. We read the current value
+    # from the Pterodactyl server itself (via the Client API).
+    if base.get("configured"):
+        line_no = _effective_token_line(panel)
+        base["tokenLine"] = line_no
         bot_token, channel_id = ("", "")
         if with_status:  # only hit the panel when a live view is requested
             lines, _err = _ptero_read_token_lines(panel)
-            try:
-                idx = int(token_line) - 1
-            except (TypeError, ValueError):
-                idx = -1
+            idx = line_no - 1
             if 0 <= idx < len(lines):
                 bot_token, channel_id = _parse_token_line(lines[idx])
         base["botToken"] = _mask_bot_token(bot_token)
@@ -960,16 +970,9 @@ def api_customer_token():
     if panel is None:
         return jsonify({"status": "error", "message": "Invalid token"}), 401
 
-    line_no = panel.get("tokenLine")
-    try:
-        line_no = int(line_no)
-    except (TypeError, ValueError):
-        line_no = 0
-    if line_no < 1:
-        return jsonify({
-            "status": "error",
-            "message": "No token line is assigned to this server. Contact admin.",
-        }), 400
+    # Default to line 1 so the customer can self-configure even when the
+    # admin didn't pin a specific line.
+    line_no = _effective_token_line(panel)
 
     body = request.get_json(silent=True) or {}
     new_token = str(body.get("botToken") or "").strip()
