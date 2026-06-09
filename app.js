@@ -369,6 +369,7 @@ Self-contained: no shared global state, IIFE wrapper.
         { key: "customerToken", label: "Customer Token", required: false, wide: true, mono: true, placeholder: "(optional, give to customer for /customer login)", masked: true },
         { key: "expiresAt",     label: "Expires At",   required: false,               placeholder: "2025-07-20 (ISO date, enables countdown)", mono: true },
         { key: "tokenLine",     label: "Token Line #", required: false,               placeholder: "1 (line number in tokens.txt, enables token editor)", mono: true },
+        { key: "tokensPath",    label: "Tokens Path",  required: false, wide: true,   placeholder: "tokens.txt (path on the Pterodactyl server)", mono: true },
     ];
 
     let __configState = null;       // current edited config snapshot

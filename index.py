@@ -326,6 +326,7 @@ def _collect_panels():
             "customerToken": str(p.get("customerToken") or "").strip(),
             "expiresAt": p.get("expiresAt"),  # ISO date string e.g. "2025-07-15"
             "tokenLine": p.get("tokenLine"),  # 1-based line number in tokens.txt
+            "tokensPath": str(p.get("tokensPath") or "tokens.txt").strip() or "tokens.txt",
         })
     return out
 
@@ -371,6 +372,74 @@ def _safe_view(panel, with_status):
     elif with_status:
         out["status"] = {"reachable": False, "error": "Panel not fully configured."}
     return out
+
+
+# ---------------------------------------------------------------------------
+# Pterodactyl file access — read/write the bot's tokens.txt on the actual
+# game server through the Client API, so it works no matter where this
+# admin panel is hosted (Vercel, etc.).
+# ---------------------------------------------------------------------------
+def _ptero_token_file(panel):
+    """Configured path of tokens.txt inside the server, leading-slash form."""
+    path = str(panel.get("tokensPath") or "tokens.txt").strip() or "tokens.txt"
+    if not path.startswith("/"):
+        path = "/" + path
+    return path
+
+
+def _ptero_read_token_lines(panel):
+    """Read tokens.txt from the Pterodactyl server. Returns (lines, error).
+
+    ``lines`` is a list of strings (no trailing newlines); ``error`` is
+    None on success or a human-readable message on failure."""
+    if not (panel.get("panelUrl") and panel.get("serverId") and panel.get("clientApiKey")):
+        return [], "Panel not configured."
+    url = "{}/api/client/servers/{}/files/contents".format(panel["panelUrl"], panel["serverId"])
+    try:
+        r = requests.get(
+            url,
+            headers={
+                "Authorization": "Bearer " + panel["clientApiKey"],
+                "Accept": "application/json",
+            },
+            params={"file": _ptero_token_file(panel)},
+            timeout=PTERO_TIMEOUT,
+        )
+    except requests.RequestException as e:
+        return [], "Read failed: " + str(e)
+    if r.status_code == 404:
+        # File doesn't exist yet — treat as empty so it can be created.
+        return [], None
+    if not (200 <= r.status_code < 300):
+        return [], "Panel returned HTTP " + str(r.status_code)
+    return r.text.splitlines(), None
+
+
+def _ptero_write_token_lines(panel, lines):
+    """Write the given lines back to tokens.txt on the Pterodactyl server.
+
+    Returns (ok, message)."""
+    if not (panel.get("panelUrl") and panel.get("serverId") and panel.get("clientApiKey")):
+        return False, "Panel not configured."
+    url = "{}/api/client/servers/{}/files/write".format(panel["panelUrl"], panel["serverId"])
+    content = "\n".join(lines) + "\n"
+    try:
+        r = requests.post(
+            url,
+            headers={
+                "Authorization": "Bearer " + panel["clientApiKey"],
+                "Accept": "application/json",
+                "Content-Type": "text/plain",
+            },
+            params={"file": _ptero_token_file(panel)},
+            data=content.encode("utf-8"),
+            timeout=PTERO_TIMEOUT,
+        )
+    except requests.RequestException as e:
+        return False, "Write failed: " + str(e)
+    if 200 <= r.status_code < 300:
+        return True, "ok"
+    return False, "Panel returned HTTP " + str(r.status_code) + ": " + r.text[:200]
 
 
 # ---------------------------------------------------------------------------
@@ -788,16 +857,24 @@ def _customer_safe_view(panel, with_status):
     base.pop("panelUrl", None)
     # Add expiration info for countdown timer
     base["expiresAt"] = panel.get("expiresAt")
-    # Add token line info (but not the actual token)
+    # Add token line info (but not the actual token). The editor shows
+    # whenever a tokenLine is configured. We read the current bot token /
+    # channel id from the Pterodactyl server itself (via the Client API),
+    # so it works regardless of where this panel is hosted.
     token_line = panel.get("tokenLine")
-    if token_line:
-        lines = _read_token_lines()
-        idx = int(token_line) - 1
-        if 0 <= idx < len(lines):
-            bot_token, channel_id = _parse_token_line(lines[idx])
-            base["botToken"] = _mask_bot_token(bot_token)
-            base["channelId"] = channel_id
-            base["tokenLine"] = token_line
+    if token_line not in (None, ""):
+        base["tokenLine"] = token_line
+        bot_token, channel_id = ("", "")
+        if with_status:  # only hit the panel when a live view is requested
+            lines, _err = _ptero_read_token_lines(panel)
+            try:
+                idx = int(token_line) - 1
+            except (TypeError, ValueError):
+                idx = -1
+            if 0 <= idx < len(lines):
+                bot_token, channel_id = _parse_token_line(lines[idx])
+        base["botToken"] = _mask_bot_token(bot_token)
+        base["channelId"] = channel_id
     return base
 
 
@@ -898,25 +975,42 @@ def api_customer_token():
     new_token = str(body.get("botToken") or "").strip()
     new_channel = str(body.get("channelId") or "").strip()
 
-    # If the customer left the token masked/unchanged, keep the existing one.
-    lines = _read_token_lines()
+    if new_token and " " in new_token:
+        return jsonify({"status": "error", "message": "Token cannot contain spaces."}), 400
+    if new_channel and " " in new_channel:
+        return jsonify({"status": "error", "message": "Channel id cannot contain spaces."}), 400
+
+    # Read the current tokens.txt from the Pterodactyl server.
+    lines, err = _ptero_read_token_lines(panel)
+    if err:
+        return jsonify({"status": "error", "message": err}), 502
+
     idx = line_no - 1
     cur_token, cur_channel = ("", "")
     if 0 <= idx < len(lines):
         cur_token, cur_channel = _parse_token_line(lines[idx])
 
+    # If the customer left the token blank/masked, keep the existing one.
     if not new_token or new_token == _mask_bot_token(cur_token) or new_token == API_KEY_MASK:
         new_token = cur_token
     if not new_channel:
         new_channel = cur_channel
 
-    ok, msg = _write_token_line(line_no, new_token, new_channel)
+    if not new_token:
+        return jsonify({"status": "error", "message": "Token is required."}), 400
+
+    # Grow the list so the target line exists, then replace it.
+    while len(lines) < line_no:
+        lines.append("")
+    lines[idx] = (new_token + " " + new_channel).strip()
+
+    ok, msg = _ptero_write_token_lines(panel, lines)
     if not ok:
-        return jsonify({"status": "error", "message": msg}), 400
+        return jsonify({"status": "error", "message": msg}), 502
 
     return jsonify({
         "status": "success",
-        "message": "Token updated. Restart your server for it to take effect.",
+        "message": "Token updated on the server. Restart it for changes to take effect.",
         "botToken": _mask_bot_token(new_token),
         "channelId": new_channel,
     }), 200
