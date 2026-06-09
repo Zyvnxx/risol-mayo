@@ -284,6 +284,16 @@ single-panel "my server" view.
     min-height: 44px;
     font-weight: 700;
 }
+.cust-tokens-area {
+    width: 100%;
+    resize: vertical;
+    min-height: 110px;
+    line-height: 1.6;
+    font-size: 12.5px;
+    white-space: pre;
+    overflow-wrap: normal;
+    overflow-x: auto;
+}
 .cust-token-hint {
     margin: 0;
     font-size: 11.5px;

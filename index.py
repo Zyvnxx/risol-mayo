@@ -870,21 +870,23 @@ def _customer_safe_view(panel, with_status):
     base.pop("panelUrl", None)
     # Add expiration info for countdown timer
     base["expiresAt"] = panel.get("expiresAt")
-    # Token editor: always available for a configured panel. If the admin
-    # did not pin a specific line, default to line 1 so the customer can
-    # set up their own bot token / channel id. We read the current value
-    # from the Pterodactyl server itself (via the Client API).
+    # Token editor: always available for a configured panel. The customer
+    # manages the whole tokens.txt for their own server — one bot per line
+    # in "TOKEN CHANNELID" form. We read the current content straight from
+    # the Pterodactyl server via the Client API.
     if base.get("configured"):
-        line_no = _effective_token_line(panel)
-        base["tokenLine"] = line_no
-        bot_token, channel_id = ("", "")
+        base["tokensEditable"] = True
         if with_status:  # only hit the panel when a live view is requested
-            lines, _err = _ptero_read_token_lines(panel)
-            idx = line_no - 1
-            if 0 <= idx < len(lines):
-                bot_token, channel_id = _parse_token_line(lines[idx])
-        base["botToken"] = _mask_bot_token(bot_token)
-        base["channelId"] = channel_id
+            lines, err = _ptero_read_token_lines(panel)
+            if err:
+                base["tokensText"] = ""
+                base["tokensError"] = err
+            else:
+                # Drop trailing blank lines for a cleaner textarea.
+                while lines and not lines[-1].strip():
+                    lines.pop()
+                base["tokensText"] = "\n".join(lines)
+                base["tokensCount"] = sum(1 for ln in lines if ln.strip())
     return base
 
 
@@ -960,62 +962,54 @@ def api_customer_power():
 
 @app.route("/api/customer/token", methods=["POST"])
 def api_customer_token():
-    """Let a customer edit their own bot token / channel id.
+    """Let a customer rewrite their server's whole tokens.txt.
 
-    The customer presents their ``customer-token`` header. We look up
-    which tokens.txt line their panel owns (``tokenLine``) and rewrite
-    only that line. They can never touch another customer's line."""
+    One bot per line in ``TOKEN CHANNELID`` form (channel optional).
+    Blank lines are dropped. The file is written back to the customer's
+    own Pterodactyl server via the Client API — they can never touch
+    another customer's server."""
     token = _customer_token_from_request()
     panel = _resolve_customer_panel(token)
     if panel is None:
         return jsonify({"status": "error", "message": "Invalid token"}), 401
 
-    # Default to line 1 so the customer can self-configure even when the
-    # admin didn't pin a specific line.
-    line_no = _effective_token_line(panel)
+    if not (panel["panelUrl"] and panel["serverId"] and panel["clientApiKey"]):
+        return jsonify({"status": "error", "message": "Panel not configured."}), 400
 
     body = request.get_json(silent=True) or {}
-    new_token = str(body.get("botToken") or "").strip()
-    new_channel = str(body.get("channelId") or "").strip()
+    raw_text = body.get("tokensText")
+    if raw_text is None:
+        return jsonify({"status": "error", "message": "Missing tokensText."}), 400
 
-    if new_token and " " in new_token:
-        return jsonify({"status": "error", "message": "Token cannot contain spaces."}), 400
-    if new_channel and " " in new_channel:
-        return jsonify({"status": "error", "message": "Channel id cannot contain spaces."}), 400
+    # Normalise line endings and validate each non-empty line.
+    in_lines = str(raw_text).replace("\r\n", "\n").replace("\r", "\n").split("\n")
+    out_lines = []
+    for i, line in enumerate(in_lines):
+        stripped = line.strip()
+        if not stripped:
+            continue
+        parts = stripped.split()
+        bot_token = parts[0]
+        channel = parts[1] if len(parts) >= 2 else ""
+        if len(parts) > 2:
+            return jsonify({
+                "status": "error",
+                "message": "Line {}: expected only TOKEN and CHANNELID.".format(i + 1),
+            }), 400
+        out_lines.append((bot_token + " " + channel).strip())
 
-    # Read the current tokens.txt from the Pterodactyl server.
-    lines, err = _ptero_read_token_lines(panel)
-    if err:
-        return jsonify({"status": "error", "message": err}), 502
+    if not out_lines:
+        return jsonify({"status": "error", "message": "At least one token line is required."}), 400
 
-    idx = line_no - 1
-    cur_token, cur_channel = ("", "")
-    if 0 <= idx < len(lines):
-        cur_token, cur_channel = _parse_token_line(lines[idx])
-
-    # If the customer left the token blank/masked, keep the existing one.
-    if not new_token or new_token == _mask_bot_token(cur_token) or new_token == API_KEY_MASK:
-        new_token = cur_token
-    if not new_channel:
-        new_channel = cur_channel
-
-    if not new_token:
-        return jsonify({"status": "error", "message": "Token is required."}), 400
-
-    # Grow the list so the target line exists, then replace it.
-    while len(lines) < line_no:
-        lines.append("")
-    lines[idx] = (new_token + " " + new_channel).strip()
-
-    ok, msg = _ptero_write_token_lines(panel, lines)
+    ok, msg = _ptero_write_token_lines(panel, out_lines)
     if not ok:
         return jsonify({"status": "error", "message": msg}), 502
 
     return jsonify({
         "status": "success",
-        "message": "Token updated on the server. Restart it for changes to take effect.",
-        "botToken": _mask_bot_token(new_token),
-        "channelId": new_channel,
+        "message": "Saved {} bot{} to the server. Restart it for changes to take effect.".format(
+            len(out_lines), "" if len(out_lines) == 1 else "s"),
+        "tokensCount": len(out_lines),
     }), 200
 
 

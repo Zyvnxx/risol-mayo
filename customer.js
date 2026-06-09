@@ -16,6 +16,7 @@ Customer portal — token-scoped self-service for a single panel.
     let __inFlight = false;
     let __countdownTimer = null;         // 1s ticker for the live countdown
     let __expiresAtMs = null;            // parsed expiry timestamp (ms) or null
+    let __tokensDirty = false;           // true while customer is editing tokens
 
     const STATE_META = {
         running:    { txt: "Running",     cls: "is-running"   },
@@ -200,6 +201,7 @@ Customer portal — token-scoped self-service for a single panel.
             __countdownTimer = null;
         }
         __expiresAtMs = null;
+        __tokensDirty = false;
         showLogin();
     }
 
@@ -271,6 +273,13 @@ Customer portal — token-scoped self-service for a single panel.
         const el = document.getElementById("cust-panel");
         if (!el) return;
 
+        // Preserve an in-progress token edit across silent auto-refreshes.
+        let preservedTokens = null;
+        if (__tokensDirty) {
+            const existing = document.getElementById("cust-tokens-text");
+            if (existing) preservedTokens = existing.value;
+        }
+
         const s = panel.status || {};
         const reachable = !!s.reachable;
         const stateKey = (s.state || (reachable ? "unknown" : "unreachable")).toLowerCase();
@@ -302,34 +311,32 @@ Customer portal — token-scoped self-service for a single panel.
                </div>`
             : "";
 
-        // ---- Token / channel editor block ----
-        const hasTokenLine = panel.tokenLine != null && panel.tokenLine !== "";
-        const tokenBlock = hasTokenLine
+        // ---- Token / channel editor block (whole tokens.txt) ----
+        const tokenBlock = panel.tokensEditable
             ? `<section class="cust-token-editor">
                    <header class="cust-token-head">
-                       <span class="cust-token-head-title">⚙ Bot token &amp; channel</span>
-                       <span class="cust-token-current">${escapeHtml(panel.botToken || "not set")}</span>
+                       <span class="cust-token-head-title">⚙ Bot tokens &amp; channels</span>
+                       <span class="cust-token-current">${escapeHtml(
+                           (panel.tokensCount != null ? panel.tokensCount : 0) +
+                           " bot" + ((panel.tokensCount === 1) ? "" : "s"))}</span>
                    </header>
                    <form class="cust-token-form" id="cust-token-form" autocomplete="off">
                        <label class="adm-field adm-field-wide">
-                           <span class="adm-field-label">Bot token</span>
-                           <input id="cust-bot-token" class="adm-field-input mono" type="text"
-                                  placeholder="leave blank to keep current"
-                                  autocomplete="off" spellcheck="false">
-                       </label>
-                       <label class="adm-field adm-field-wide">
-                           <span class="adm-field-label">Channel ID</span>
-                           <input id="cust-channel-id" class="adm-field-input mono" type="text"
-                                  placeholder="channel id"
-                                  value="${escapeHtml(panel.channelId || "")}"
-                                  autocomplete="off" spellcheck="false">
+                           <span class="adm-field-label">One bot per line — <span class="mono">TOKEN CHANNELID</span></span>
+                           <textarea id="cust-tokens-text"
+                                     class="adm-field-input mono cust-tokens-area"
+                                     rows="5"
+                                     placeholder="MTk2...token1 123456789012345678&#10;MTk2...token2 987654321098765432"
+                                     spellcheck="false"
+                                     autocomplete="off">${escapeHtml(panel.tokensText || "")}</textarea>
                        </label>
                        <button class="adm-btn adm-btn-success cust-token-save" type="submit">
-                           <span>💾</span> Save token
+                           <span>💾</span> Save tokens
                        </button>
                        <p class="cust-token-hint">
-                           Changes are written to <span class="mono">tokens.txt</span>.
-                           Restart your server afterward for them to apply.
+                           Each line is one bot: paste the token, a space, then the channel ID.
+                           Press <strong>Enter</strong> for another bot. Saved straight to
+                           <span class="mono">tokens.txt</span> on your server — restart afterward to apply.
                        </p>
                    </form>
                </section>`
@@ -397,23 +404,24 @@ Customer portal — token-scoped self-service for a single panel.
             });
         }
 
+        const tokensArea = document.getElementById("cust-tokens-text");
+        if (tokensArea) {
+            // Restore an edit that was in progress during a background refresh.
+            if (preservedTokens != null) tokensArea.value = preservedTokens;
+            tokensArea.addEventListener("input", () => { __tokensDirty = true; });
+        }
+
         // Kick off (or restart) the live countdown for this panel.
         startCountdown(expiresMs);
     }
 
     async function saveToken(form) {
-        const tokenInp = document.getElementById("cust-bot-token");
-        const chanInp  = document.getElementById("cust-channel-id");
+        const area = document.getElementById("cust-tokens-text");
         const btn = form ? form.querySelector(".cust-token-save") : null;
-        const botToken = tokenInp ? tokenInp.value.trim() : "";
-        const channelId = chanInp ? chanInp.value.trim() : "";
+        const tokensText = area ? area.value : "";
 
-        if (botToken && /\s/.test(botToken)) {
-            showToast("Token cannot contain spaces.", "error");
-            return;
-        }
-        if (channelId && /\s/.test(channelId)) {
-            showToast("Channel id cannot contain spaces.", "error");
+        if (!tokensText.trim()) {
+            showToast("Add at least one token line.", "error");
             return;
         }
 
@@ -425,7 +433,7 @@ Customer portal — token-scoped self-service for a single panel.
 
         const res = await api("/api/customer/token", {
             method: "POST",
-            body: { botToken, channelId },
+            body: { tokensText },
         });
 
         if (btn) {
@@ -440,8 +448,8 @@ Customer portal — token-scoped self-service for a single panel.
         }
 
         if (res.ok && res.data && res.data.status === "success") {
-            showToast(res.data.message || "Token saved", "success");
-            if (tokenInp) tokenInp.value = "";
+            showToast(res.data.message || "Tokens saved", "success");
+            __tokensDirty = false;
             setTimeout(() => refresh({ silent: true }), 800);
         } else {
             showToast(`Save failed: ${res.data.message || "request failed"}`, "error");
