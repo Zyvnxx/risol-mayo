@@ -305,11 +305,11 @@ Customer portal — token-scoped self-service for a single panel.
         // ---- Token / channel editor block ----
         const hasTokenLine = panel.tokenLine != null && panel.tokenLine !== "";
         const tokenBlock = hasTokenLine
-            ? `<details class="cust-token-editor">
-                   <summary class="cust-token-summary">
-                       <span>⚙ Bot token &amp; channel</span>
+            ? `<section class="cust-token-editor">
+                   <header class="cust-token-head">
+                       <span class="cust-token-head-title">⚙ Bot token &amp; channel</span>
                        <span class="cust-token-current">${escapeHtml(panel.botToken || "not set")}</span>
-                   </summary>
+                   </header>
                    <form class="cust-token-form" id="cust-token-form" autocomplete="off">
                        <label class="adm-field adm-field-wide">
                            <span class="adm-field-label">Bot token</span>
@@ -332,7 +332,7 @@ Customer portal — token-scoped self-service for a single panel.
                            Restart your server afterward for them to apply.
                        </p>
                    </form>
-               </details>`
+               </section>`
             : "";
 
         el.innerHTML = `
