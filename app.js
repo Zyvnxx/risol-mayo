@@ -33,7 +33,7 @@ Self-contained: no shared global state, IIFE wrapper.
     /* ===================================================================
      * Constants
      * =================================================================== */
-    const REFRESH_MS = 10_000;
+    const REFRESH_MS = 7_000;
     let __refreshTimer = null;
     let __toastTimer = null;
     let __inFlight = false;
