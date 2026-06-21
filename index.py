@@ -38,8 +38,8 @@ from flask import Flask, jsonify, request, send_from_directory
 # ---------------------------------------------------------------------------
 BASE_DIR = Path(__file__).resolve().parent
 
-PTERO_TIMEOUT = 5.0
-PTERO_PARALLEL = 8
+PTERO_TIMEOUT = float(os.environ.get("PTERO_TIMEOUT") or 15.0)
+PTERO_PARALLEL = int(os.environ.get("PTERO_PARALLEL") or 8)
 
 # How long a successful /resources result stays fresh (seconds). Within
 # this window the cached status is served without hitting Pterodactyl.
