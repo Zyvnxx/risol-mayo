@@ -22,6 +22,7 @@ import json
 import os
 import secrets
 import sys
+import threading
 import time
 import traceback
 from concurrent.futures import ThreadPoolExecutor
@@ -39,6 +40,15 @@ BASE_DIR = Path(__file__).resolve().parent
 
 PTERO_TIMEOUT = 5.0
 PTERO_PARALLEL = 8
+
+# How long a successful /resources result stays fresh (seconds). Within
+# this window the cached status is served without hitting Pterodactyl.
+PTERO_CACHE_TTL = float(os.environ.get("PTERO_CACHE_TTL") or 10.0)
+
+# tokens.txt changes rarely, so it can stay fresh much longer than live
+# stats. This keeps the customer auto-refresh from re-reading the file
+# from the Pterodactyl server every cycle.
+TOKENS_CACHE_TTL = float(os.environ.get("TOKENS_CACHE_TTL") or 60.0)
 
 ALLOWED_SIGNALS = ("start", "stop", "restart", "kill")
 API_KEY_MASK = "********"
@@ -59,6 +69,19 @@ _STATE = {
     "config_loaded": False, # was a load attempted?
     "config_error": None,   # str if load failed
 }
+
+# Per-panel status cache: {panel_id: {"result": dict, "ts": float}}.
+# Guarded by _STATUS_LOCK so the thread pool can write to it safely.
+_STATUS_CACHE = {}
+_STATUS_LOCK = threading.Lock()
+
+# Per-panel tokens.txt cache: {panel_id: {"lines": list, "ts": float}}.
+# Shares _STATUS_LOCK — both are small and rarely contended.
+_TOKENS_CACHE = {}
+
+# Single shared thread pool — created once, reused across requests instead
+# of spinning up a new pool (and its OS threads) on every /api/panels hit.
+_EXECUTOR = ThreadPoolExecutor(max_workers=PTERO_PARALLEL)
 
 
 def _config_path():
@@ -359,6 +382,38 @@ def _ptero_resources(panel):
     }
 
 
+def _ptero_resources_cached(panel, ttl=None):
+    """Cached wrapper around _ptero_resources.
+
+    Returns a fresh result if the cached one is older than ``ttl`` seconds
+    (defaults to PTERO_CACHE_TTL). Successful reads are cached; failures are
+    also cached but with a shorter implicit life since the next request will
+    retry once TTL passes. This keeps one slow/unreachable panel from being
+    re-hit on every refresh within the window."""
+    if ttl is None:
+        ttl = PTERO_CACHE_TTL
+    pid = panel["id"]
+    now = time.time()
+    with _STATUS_LOCK:
+        entry = _STATUS_CACHE.get(pid)
+        if entry and (now - entry["ts"]) < ttl:
+            return entry["result"]
+
+    result = _ptero_resources(panel)
+    with _STATUS_LOCK:
+        _STATUS_CACHE[pid] = {"result": result, "ts": time.time()}
+    return result
+
+
+def _invalidate_status(panel_id):
+    """Drop the cached status for a panel so the next read is fresh.
+
+    Called after a power action so the UI reflects the new state quickly
+    instead of waiting for the TTL to lapse."""
+    with _STATUS_LOCK:
+        _STATUS_CACHE.pop(panel_id, None)
+
+
 def _safe_view(panel, with_status):
     out = {
         "id": panel["id"],
@@ -368,7 +423,7 @@ def _safe_view(panel, with_status):
         "configured": bool(panel["panelUrl"] and panel["serverId"] and panel["clientApiKey"]),
     }
     if with_status and out["configured"]:
-        out["status"] = _ptero_resources(panel)
+        out["status"] = _ptero_resources_cached(panel)
     elif with_status:
         out["status"] = {"reachable": False, "error": "Panel not fully configured."}
     return out
@@ -426,6 +481,38 @@ def _ptero_read_token_lines(panel):
     if not (200 <= r.status_code < 300):
         return [], "Panel returned HTTP " + str(r.status_code)
     return r.text.splitlines(), None
+
+
+def _ptero_read_token_lines_cached(panel, ttl=None):
+    """Cached wrapper around _ptero_read_token_lines.
+
+    tokens.txt changes only when the customer saves it, so re-reading it
+    from the Pterodactyl server on every 15s status refresh is wasteful.
+    Successful reads are cached for ``ttl`` seconds (TOKENS_CACHE_TTL).
+    Errors are NOT cached so a transient failure retries next time."""
+    if ttl is None:
+        ttl = TOKENS_CACHE_TTL
+    pid = panel["id"]
+    now = time.time()
+    with _STATUS_LOCK:
+        entry = _TOKENS_CACHE.get(pid)
+        if entry and (now - entry["ts"]) < ttl:
+            return entry["lines"], None
+
+    lines, err = _ptero_read_token_lines(panel)
+    if err is None:
+        with _STATUS_LOCK:
+            _TOKENS_CACHE[pid] = {"lines": lines, "ts": time.time()}
+    return lines, err
+
+
+def _invalidate_tokens(panel_id):
+    """Drop the cached tokens.txt for a panel so the next read is fresh.
+
+    Called after a customer writes new tokens so the editor reflects the
+    saved content immediately."""
+    with _STATUS_LOCK:
+        _TOKENS_CACHE.pop(panel_id, None)
 
 
 def _ptero_write_token_lines(panel, lines):
@@ -715,9 +802,8 @@ def api_panels():
     with_status = request.args.get("status", "1").lower() not in ("0", "false", "no")
     panels = _collect_panels()
     if with_status and panels:
-        workers = max(1, min(PTERO_PARALLEL, len(panels)))
-        with ThreadPoolExecutor(max_workers=workers) as ex:
-            public = list(ex.map(lambda p: _safe_view(p, True), panels))
+        # Reuse the shared pool instead of building a new one per request.
+        public = list(_EXECUTOR.map(lambda p: _safe_view(p, True), panels))
     else:
         public = [_safe_view(p, False) for p in panels]
     return jsonify({
@@ -760,11 +846,32 @@ def api_panels_power():
         return jsonify({"status": "error", "message": "Pterodactyl request failed: " + str(e)}), 502
 
     if 200 <= resp.status_code < 300:
+        _invalidate_status(panel_id)
         return jsonify({"status": "success", "id": panel_id, "name": panel["name"], "signal": signal}), 200
     return jsonify({
         "status": "error",
         "message": "Panel rejected (" + str(resp.status_code) + "): " + resp.text[:200],
     }), 502
+
+
+@app.route("/api/panels/<panel_id>", methods=["GET"])
+def api_panel_one(panel_id):
+    """Status for a single panel.
+
+    Lets the browser fetch each panel independently so a fast panel
+    renders immediately instead of waiting for the slowest one in a
+    combined response."""
+    if not _check_password():
+        return _unauthorized()
+    pid = str(panel_id or "").strip()
+    panel = next((p for p in _collect_panels() if p["id"] == pid), None)
+    if panel is None:
+        return jsonify({"status": "error", "message": "Unknown panel id."}), 404
+    return jsonify({
+        "status": "success",
+        "panel": _safe_view(panel, True),
+        "ts": int(time.time()),
+    }), 200
 
 
 @app.route("/api/config", methods=["GET"])
@@ -877,7 +984,7 @@ def _customer_safe_view(panel, with_status):
     if base.get("configured"):
         base["tokensEditable"] = True
         if with_status:  # only hit the panel when a live view is requested
-            lines, err = _ptero_read_token_lines(panel)
+            lines, err = _ptero_read_token_lines_cached(panel)
             if err:
                 base["tokensText"] = ""
                 base["tokensError"] = err
@@ -1005,6 +1112,8 @@ def api_customer_token():
     if not ok:
         return jsonify({"status": "error", "message": msg}), 502
 
+    # Refresh the cached copy so the next read reflects the new tokens.
+    _invalidate_tokens(panel["id"])
     return jsonify({
         "status": "success",
         "message": "Saved {} bot{} to the server. Restart it for changes to take effect.".format(

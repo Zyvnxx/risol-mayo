@@ -17,6 +17,8 @@ Customer portal — token-scoped self-service for a single panel.
     let __countdownTimer = null;         // 1s ticker for the live countdown
     let __expiresAtMs = null;            // parsed expiry timestamp (ms) or null
     let __tokensDirty = false;           // true while customer is editing tokens
+    let __renderedId = null;             // panel id the full card was built for
+    let __renderedTokensEditable = null; // tokensEditable at last full render
 
     const STATE_META = {
         running:    { txt: "Running",     cls: "is-running"   },
@@ -273,6 +275,18 @@ Customer portal — token-scoped self-service for a single panel.
         const el = document.getElementById("cust-panel");
         if (!el) return;
 
+        // Fast path: the card for this same panel already exists and its
+        // structure (token editor present or not) is unchanged. Patch the
+        // live stats in place instead of rebuilding the whole card — this
+        // avoids destroying the token textarea and countdown every 15s.
+        const cardExists = el.querySelector(".cust-panel-card");
+        if (cardExists
+            && __renderedId === panel.id
+            && __renderedTokensEditable === !!panel.tokensEditable) {
+            patchPanel(panel);
+            return;
+        }
+
         // Preserve an in-progress token edit across silent auto-refreshes.
         let preservedTokens = null;
         if (__tokensDirty) {
@@ -349,8 +363,8 @@ Customer portal — token-scoped self-service for a single panel.
                         <h2 class="cust-panel-name">${escapeHtml(panel.name || panel.id)}</h2>
                         <div class="cust-panel-id">${escapeHtml(panel.id)}</div>
                     </div>
-                    <span class="adm-state ${meta.cls}">
-                        <span class="adm-state-dot"></span>${escapeHtml(meta.txt)}
+                    <span class="adm-state ${meta.cls}" id="cust-state-badge">
+                        <span class="adm-state-dot"></span><span id="cust-state-text">${escapeHtml(meta.txt)}</span>
                     </span>
                 </header>
 
@@ -411,8 +425,65 @@ Customer portal — token-scoped self-service for a single panel.
             tokensArea.addEventListener("input", () => { __tokensDirty = true; });
         }
 
+        // Remember what this full render was built from, so subsequent
+        // refreshes can decide whether a cheap stats patch is enough.
+        __renderedId = panel.id;
+        __renderedTokensEditable = !!panel.tokensEditable;
+
         // Kick off (or restart) the live countdown for this panel.
         startCountdown(expiresMs);
+    }
+
+    // Cheap update path: patch only the live stats + state badge in place.
+    // Leaves the token editor textarea, countdown element, and button
+    // handlers completely untouched, so an in-progress edit and the 1s
+    // countdown ticker survive the 15s auto-refresh without a rebuild.
+    function patchPanel(panel) {
+        const s = panel.status || {};
+        const reachable = !!s.reachable;
+        const stateKey = (s.state || (reachable ? "unknown" : "unreachable")).toLowerCase();
+        const meta = STATE_META[stateKey] || STATE_META.unknown;
+
+        const badge = document.getElementById("cust-state-badge");
+        const stateText = document.getElementById("cust-state-text");
+        if (badge) badge.className = "adm-state " + meta.cls;
+        if (stateText) stateText.textContent = meta.txt;
+
+        const vals = document.querySelectorAll(".cust-panel-stat-value");
+        if (vals.length >= 4) {
+            vals[0].textContent = Number(s.cpuAbsolute || 0).toFixed(1) + "%";
+            vals[1].textContent = formatBytes(s.memoryBytes || 0);
+            vals[2].textContent = formatBytes(s.diskBytes || 0);
+            vals[3].textContent = formatUptimeMs(s.uptimeMs || 0);
+        }
+
+        // Keep power buttons' disabled state in sync with the live status.
+        const isRunning = stateKey === "running" || stateKey === "starting";
+        const setDisabled = (sig, off) => {
+            const b = document.querySelector(`.cust-power-btn[data-signal="${sig}"]`);
+            if (b) b.disabled = !!off;
+        };
+        setDisabled("start", !panel.configured || isRunning);
+        setDisabled("stop", !panel.configured || stateKey === "offline");
+        setDisabled("restart", !panel.configured);
+
+        // Update the "N bots" pill without rebuilding the textarea, but only
+        // when the customer isn't mid-edit (so the count can't fight them).
+        if (!__tokensDirty && panel.tokensCount != null) {
+            const pill = document.querySelector(".cust-token-current");
+            if (pill) {
+                const n = panel.tokensCount;
+                pill.textContent = n + " bot" + (n === 1 ? "" : "s");
+            }
+            const area = document.getElementById("cust-tokens-text");
+            if (area && panel.tokensText != null && area.value !== panel.tokensText) {
+                area.value = panel.tokensText;
+            }
+        }
+
+        // Refresh the countdown target only if the expiry actually changed.
+        const expiresMs = parseExpiry(panel.expiresAt);
+        if (expiresMs !== __expiresAtMs) startCountdown(expiresMs);
     }
 
     async function saveToken(form) {

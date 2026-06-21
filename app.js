@@ -45,7 +45,12 @@ Self-contained: no shared global state, IIFE wrapper.
         offline:    { txt: "Offline",     cls: "is-offline"   },
         unknown:    { txt: "Unknown",     cls: "is-unknown"   },
         unreachable:{ txt: "Unreachable", cls: "is-error"     },
+        checking:   { txt: "Checking…",   cls: "is-unknown"   },
     };
+
+    // Per-card signature cache so we only touch the DOM when something
+    // actually changed. Keyed by panel id.
+    const __cardSig = new Map();
 
     /* ===================================================================
      * Utilities
@@ -135,7 +140,10 @@ Self-contained: no shared global state, IIFE wrapper.
         if (!silent) setStatus("Refreshing…", "loading");
 
         try {
-            const res = await api("/api/panels");
+            // Phase 1: fetch the panel list WITHOUT status. This returns
+            // almost instantly (no Pterodactyl calls) so the cards appear
+            // right away instead of waiting for the slowest panel.
+            const res = await api("/api/panels?status=0");
             if (!res || !res.ok) {
                 setStatus("Disconnected", "error");
                 if (!silent) {
@@ -145,14 +153,39 @@ Self-contained: no shared global state, IIFE wrapper.
                 return;
             }
 
-            const data = res.data;
-            const panels = data.panels || [];
-            renderSummary(panels);
+            const panels = (res.data && res.data.panels) || [];
             renderGrid(panels);
+            renderSummary(panels);
             setStatus("Online", "ok");
+
+            // Phase 2: fetch each panel's live status independently, in
+            // parallel. Fast panels update immediately; one slow/unreachable
+            // panel no longer blocks the rest.
+            fetchAllStatuses(panels);
         } finally {
             __inFlight = false;
         }
+    }
+
+    // Fetch live status for every panel in parallel and patch each card
+    // as its response lands. Updates the summary once all settle.
+    function fetchAllStatuses(panels) {
+        if (!panels.length) return;
+        const merged = panels.map(p => ({ ...p }));
+        const byId = new Map(merged.map(p => [p.id, p]));
+
+        const jobs = panels.map(p =>
+            api("/api/panels/" + encodeURIComponent(p.id)).then(res => {
+                if (res && res.ok && res.data && res.data.panel) {
+                    const full = res.data.panel;
+                    const slot = byId.get(p.id);
+                    if (slot) Object.assign(slot, full);
+                    upsertCard(full);
+                }
+            }).catch(() => {})
+        );
+
+        Promise.allSettled(jobs).then(() => renderSummary(merged));
     }
 
     function renderSummary(panels) {
@@ -161,6 +194,7 @@ Self-contained: no shared global state, IIFE wrapper.
         let offline = 0;
         let unreachable = 0;
         for (const p of panels) {
+            if (p.status == null) continue;   // status not in yet — don't miscount
             const s = p.status || {};
             if (!s.reachable) { unreachable++; continue; }
             const st = (s.state || "").toLowerCase();
@@ -179,6 +213,7 @@ Self-contained: no shared global state, IIFE wrapper.
         if (!grid) return;
 
         if (!panels.length) {
+            __cardSig.clear();
             grid.innerHTML = `
                 <div class="adm-empty">
                     <strong>No panels configured.</strong>
@@ -191,14 +226,81 @@ Self-contained: no shared global state, IIFE wrapper.
             return;
         }
 
-        grid.innerHTML = panels.map(renderCard).join("");
-        bindCardActions();
+        const wanted = new Set(panels.map(p => String(p.id)));
+
+        // Remove cards (and stale signatures) for panels that no longer exist.
+        grid.querySelectorAll(".adm-card[data-panel-id]").forEach(card => {
+            if (!wanted.has(card.dataset.panelId)) {
+                __cardSig.delete(card.dataset.panelId);
+                card.remove();
+            }
+        });
+        // Drop the empty-state placeholder if it's lingering.
+        const placeholder = grid.querySelector(".adm-empty, .adm-loading");
+        if (placeholder) placeholder.remove();
+
+        // Upsert each panel in order, only touching the DOM when changed.
+        let prev = null;
+        for (const p of panels) {
+            const node = upsertCard(p, /*reorderAfter*/ prev);
+            if (node) prev = node;
+        }
+    }
+
+    // Build a compact signature of everything that affects a card's render.
+    function cardSignature(p) {
+        const s = p.status || {};
+        return [
+            p.name, p.id, p.panelUrl, p.serverId, p.configured ? 1 : 0,
+            p.status == null ? "?" : "1",
+            s.reachable ? 1 : 0, s.state || "",
+            Math.round(Number(s.cpuAbsolute || 0) * 10),
+            s.memoryBytes || 0, s.diskBytes || 0,
+            Math.round(Number(s.uptimeMs || 0) / 1000),
+            s.error || "",
+        ].join("|");
+    }
+
+    // Insert or update a single card in place. Returns the card element.
+    function upsertCard(p, reorderAfter) {
+        const grid = document.getElementById("adm-grid");
+        if (!grid) return null;
+        const id = String(p.id);
+        const sig = cardSignature(p);
+        const existing = grid.querySelector(`.adm-card[data-panel-id="${cssEscape(id)}"]`);
+
+        if (existing && __cardSig.get(id) === sig) {
+            return existing; // nothing changed — leave the DOM untouched
+        }
+
+        const html = renderCard(p);
+        if (existing) {
+            existing.outerHTML = html;
+        } else {
+            grid.insertAdjacentHTML("beforeend", html);
+        }
+        __cardSig.set(id, sig);
+        return grid.querySelector(`.adm-card[data-panel-id="${cssEscape(id)}"]`);
+    }
+
+    // Minimal CSS attribute-value escaper (panel ids are short/simple, but
+    // be safe against quotes/backslashes in selectors).
+    function cssEscape(s) {
+        return String(s).replace(/["\\]/g, "\\$&");
     }
 
     function renderCard(p) {
+        const hasStatus = p.status != null;          // phase-2 data arrived?
         const s = p.status || {};
         const reachable = !!s.reachable;
-        const stateKey = (s.state || (reachable ? "unknown" : "unreachable")).toLowerCase();
+        let stateKey;
+        if (!p.configured) {
+            stateKey = "unreachable";
+        } else if (!hasStatus) {
+            stateKey = "checking";                    // still waiting on phase 2
+        } else {
+            stateKey = (s.state || (reachable ? "unknown" : "unreachable")).toLowerCase();
+        }
         const meta = STATE_META[stateKey] || STATE_META.unknown;
 
         const cpu     = Number(s.cpuAbsolute || 0);
@@ -206,7 +308,7 @@ Self-contained: no shared global state, IIFE wrapper.
         const disk    = formatBytes(s.diskBytes || 0);
         const uptime  = formatUptimeMs(s.uptimeMs || 0);
 
-        const errorBlock = (!reachable && p.configured)
+        const errorBlock = (hasStatus && !reachable && p.configured)
             ? `<div class="adm-card-error">⚠ ${escapeHtml(s.error || "Panel unreachable")}</div>`
             : "";
         const unconfiguredBlock = (!p.configured)
@@ -238,8 +340,9 @@ Self-contained: no shared global state, IIFE wrapper.
         const stopDisabled    = !p.configured || stateKey === "offline" ? "disabled" : "";
         const restartDisabled = !p.configured ? "disabled" : "";
 
+        const sig = cardSignature(p);
         return `
-            <article class="adm-card" data-panel-id="${escapeHtml(p.id)}">
+            <article class="adm-card" data-panel-id="${escapeHtml(p.id)}" data-sig="${escapeHtml(sig)}">
                 <header class="adm-card-header">
                     <div class="adm-card-title">
                         <h3>${escapeHtml(p.name)}</h3>
@@ -282,15 +385,20 @@ Self-contained: no shared global state, IIFE wrapper.
             </article>`;
     }
 
+    // Event delegation: bound once on the grid container, so re-rendering
+    // individual cards never leaves us re-attaching handlers (or leaking).
     function bindCardActions() {
-        document.querySelectorAll(".adm-card .adm-power-btn").forEach(btn => {
-            btn.addEventListener("click", () => {
-                const card   = btn.closest(".adm-card");
-                const id     = card && card.dataset.panelId;
-                const signal = btn.dataset.signal;
-                if (!id || !signal) return;
-                powerPanel(id, signal, btn);
-            });
+        const grid = document.getElementById("adm-grid");
+        if (!grid || grid.__powerBound) return;
+        grid.__powerBound = true;
+        grid.addEventListener("click", e => {
+            const btn = e.target.closest(".adm-power-btn");
+            if (!btn || !grid.contains(btn)) return;
+            const card   = btn.closest(".adm-card");
+            const id     = card && card.dataset.panelId;
+            const signal = btn.dataset.signal;
+            if (!id || !signal) return;
+            powerPanel(id, signal, btn);
         });
     }
 
@@ -646,6 +754,7 @@ Self-contained: no shared global state, IIFE wrapper.
             b.addEventListener("click", () => bulkPower(b.dataset.bulk));
         });
 
+        bindCardActions();   // delegate power clicks once for the grid's lifetime
         refresh({ silent: false });
 
         __refreshTimer = setInterval(() => {
