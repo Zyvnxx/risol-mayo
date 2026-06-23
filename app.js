@@ -33,8 +33,6 @@ Self-contained: no shared global state, IIFE wrapper.
     /* ===================================================================
      * Constants
      * =================================================================== */
-    const REFRESH_MS = 10_000;
-    let __refreshTimer = null;
     let __toastTimer = null;
     let __inFlight = false;
 
@@ -919,15 +917,6 @@ Self-contained: no shared global state, IIFE wrapper.
         });
 
         bindCardActions();   // delegate power clicks once for the grid's lifetime
-        refresh({ silent: false });
-
-        __refreshTimer = setInterval(() => {
-            if (typeof document !== "undefined" && document.hidden) return;
-            refresh({ silent: true });
-        }, REFRESH_MS);
-
-        document.addEventListener("visibilitychange", () => {
-            if (!document.hidden) refresh({ silent: true });
-        });
+        refresh({ silent: false });   // initial load only — no auto-refresh after this
     });
 })();
