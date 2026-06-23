@@ -127,70 +127,8 @@ Independent from any specific bot deployment.
             <button class="adm-btn adm-btn-danger" data-bulk="stop" type="button">
                 <span>■</span> Stop All
             </button>
-            <button class="adm-btn adm-btn-update" id="adm-update-all-btn" type="button" title="Run git pull on all panels">
-                <span>⬆</span> Update All
-            </button>
-            <button class="adm-btn adm-btn-deploy" id="adm-open-deploy-btn" type="button" title="Deploy files from GitHub to all panels">
-                <span>🚀</span> Deploy Files
-            </button>
         </div>
     </section>
-
-    <!-- ============ DEPLOY MODAL ============ -->
-    <div id="adm-deploy-modal" class="adm-modal adm-hidden" role="dialog" aria-modal="true">
-        <div class="adm-modal-backdrop" data-deploy-close></div>
-        <div class="adm-modal-card adm-modal-card--wide">
-            <header class="adm-modal-header">
-                <div>
-                    <h2 class="adm-modal-title">🚀 Deploy Files to All Servers</h2>
-                    <p class="adm-modal-sub">Upload file dari komputer → langsung kirim ke semua Pterodactyl</p>
-                </div>
-                <button class="adm-modal-close" type="button" data-deploy-close aria-label="Close">×</button>
-            </header>
-
-            <div class="adm-modal-body">
-
-                <!-- Drop zone / file picker -->
-                <label class="adm-upload-zone" for="adm-upload-input">
-                    <span class="adm-upload-icon">📂</span>
-                    <span class="adm-upload-label">Click to select files</span>
-                    <span class="adm-upload-hint">You can select multiple files at once</span>
-                    <input type="file" id="adm-upload-input" multiple hidden>
-                </label>
-
-                <!-- Selected files preview -->
-                <div id="adm-upload-preview" class="adm-upload-preview">
-                    <p class="adm-upload-hint">No files selected.</p>
-                </div>
-
-                <!-- Options -->
-                <div class="adm-deploy-options">
-                    <div style="display:flex;align-items:center;gap:12px;flex-wrap:wrap">
-                        <label class="adm-deploy-opt">
-                            <input type="checkbox" id="adm-deploy-restart">
-                            <span>Restart all servers after deploy</span>
-                        </label>
-                        <label class="adm-deploy-opt" style="gap:6px">
-                            <span style="font-size:12px;color:var(--adm-muted)">Path:</span>
-                            <input type="text" id="adm-server-path"
-                                   value="/home/container/"
-                                   style="background:rgba(0,0,0,0.3);border:1px solid var(--adm-border);color:var(--adm-text);border-radius:6px;padding:4px 8px;font-size:12px;width:180px;font-family:monospace">
-                        </label>
-                    </div>
-                </div>
-
-                <!-- Result -->
-                <div id="adm-deploy-result" class="adm-deploy-result adm-hidden"></div>
-            </div>
-
-            <footer class="adm-modal-footer">
-                <button class="adm-btn adm-btn-ghost" type="button" data-deploy-close>Cancel</button>
-                <button id="adm-deploy-btn" class="adm-btn adm-btn-deploy" type="button" disabled>
-                    🚀 Deploy to All Servers
-                </button>
-            </footer>
-        </div>
-    </div>
 
     <!-- panel grid -->
     <section class="adm-grid" id="adm-grid">
