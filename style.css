@@ -766,6 +766,11 @@ code {
     color: var(--adm-text-0);
     cursor: pointer;
 }
+.adm-upload-hint {
+    font-weight: 400;
+    font-size: 11.5px;
+    color: var(--adm-text-3);
+}
 .adm-upload-target-list {
     display: flex;
     flex-direction: column;

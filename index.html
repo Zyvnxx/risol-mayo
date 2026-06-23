@@ -119,6 +119,17 @@ Independent from any specific bot deployment.
                 </label>
 
                 <div class="adm-field adm-field-wide">
+                    <label class="adm-upload-target-all">
+                        <input type="checkbox" id="adm-upload-decompress">
+                        <span>Unarchive after upload <span class="adm-upload-hint">(extract .zip/.tar.gz into the folder, like Pterodactyl)</span></span>
+                    </label>
+                    <label class="adm-upload-target-all" id="adm-upload-delete-wrap" style="display:none">
+                        <input type="checkbox" id="adm-upload-delete" checked>
+                        <span>Delete the archive after extracting</span>
+                    </label>
+                </div>
+
+                <div class="adm-field adm-field-wide">
                     <span class="adm-field-label">Target panels</span>
                     <div class="adm-upload-targets" id="adm-upload-targets">
                         <label class="adm-upload-target-all">

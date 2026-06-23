@@ -593,6 +593,69 @@ def _ptero_write_file(panel, dest_path, raw_bytes):
     return False, "HTTP " + str(r.status_code) + ": " + r.text[:200]
 
 
+def _split_root_file(dest_path):
+    """Split a leading-slash path into (root_dir, filename) for the
+    Pterodactyl decompress API, which wants the directory the archive
+    lives in plus the archive's own name."""
+    p = dest_path if dest_path.startswith("/") else "/" + dest_path
+    idx = p.rstrip("/").rfind("/")
+    if idx <= 0:
+        return "/", p.strip("/")
+    return p[:idx], p[idx + 1:]
+
+
+def _ptero_decompress(panel, dest_path):
+    """Decompress an archive already uploaded to ``dest_path`` on the
+    server, extracting it into the same directory. Mirrors Pterodactyl's
+    "Unarchive" action via the Client API. Returns (ok, message)."""
+    if not (panel.get("panelUrl") and panel.get("serverId") and panel.get("clientApiKey")):
+        return False, "Panel not configured."
+    root, fname = _split_root_file(dest_path)
+    url = "{}/api/client/servers/{}/files/decompress".format(panel["panelUrl"], panel["serverId"])
+    try:
+        r = requests.post(
+            url,
+            headers={
+                "Authorization": "Bearer " + panel["clientApiKey"],
+                "Accept": "application/json",
+                "Content-Type": "application/json",
+            },
+            json={"root": root, "file": fname},
+            # Extraction can take longer than a simple write, so allow more time.
+            timeout=max(PTERO_TIMEOUT, 60.0),
+        )
+    except requests.RequestException as e:
+        return False, "Decompress failed: " + str(e)
+    if 200 <= r.status_code < 300:
+        return True, "ok"
+    return False, "Decompress HTTP " + str(r.status_code) + ": " + r.text[:200]
+
+
+def _ptero_delete_file(panel, dest_path):
+    """Delete a single file at ``dest_path`` via the Client API. Used to
+    clean up an archive after it has been extracted. Returns (ok, message)."""
+    if not (panel.get("panelUrl") and panel.get("serverId") and panel.get("clientApiKey")):
+        return False, "Panel not configured."
+    root, fname = _split_root_file(dest_path)
+    url = "{}/api/client/servers/{}/files/delete".format(panel["panelUrl"], panel["serverId"])
+    try:
+        r = requests.post(
+            url,
+            headers={
+                "Authorization": "Bearer " + panel["clientApiKey"],
+                "Accept": "application/json",
+                "Content-Type": "application/json",
+            },
+            json={"root": root, "files": [fname]},
+            timeout=PTERO_TIMEOUT,
+        )
+    except requests.RequestException as e:
+        return False, "Delete failed: " + str(e)
+    if 200 <= r.status_code < 300:
+        return True, "ok"
+    return False, "Delete HTTP " + str(r.status_code) + ": " + r.text[:200]
+
+
 # ---------------------------------------------------------------------------
 # Config redact / merge / validate
 # ---------------------------------------------------------------------------
@@ -919,7 +982,11 @@ def api_panels_upload():
 
     Writes the same file to every targeted panel via the Pterodactyl
     Client API in parallel. Returns a per-panel result list so the UI can
-    show which servers succeeded and which failed."""
+    show which servers succeeded and which failed.
+
+    Optional ``decompress: true`` extracts the uploaded archive (zip, tar,
+    tar.gz, …) into its directory afterwards, like Pterodactyl's Unarchive
+    action, then removes the archive file."""
     if not _check_password():
         return _unauthorized()
 
@@ -927,6 +994,8 @@ def api_panels_upload():
     raw_path = body.get("path")
     filename = str(body.get("filename") or "").strip()
     content_b64 = body.get("contentB64")
+    decompress = bool(body.get("decompress"))
+    delete_after = decompress and body.get("deleteArchive", True)
 
     if not content_b64:
         return jsonify({"status": "error", "message": "Missing file content."}), 400
@@ -971,7 +1040,18 @@ def api_panels_upload():
         if not (panel["panelUrl"] and panel["serverId"] and panel["clientApiKey"]):
             return {"id": panel["id"], "name": panel["name"], "ok": False, "message": "Panel not configured."}
         ok, msg = _ptero_write_file(panel, dest, raw_bytes)
-        return {"id": panel["id"], "name": panel["name"], "ok": ok, "message": msg}
+        if not ok:
+            return {"id": panel["id"], "name": panel["name"], "ok": False, "message": msg}
+        if not decompress:
+            return {"id": panel["id"], "name": panel["name"], "ok": True, "message": "ok"}
+        # Extract the archive into its directory, then optionally remove it.
+        dok, dmsg = _ptero_decompress(panel, dest)
+        if not dok:
+            return {"id": panel["id"], "name": panel["name"], "ok": False,
+                    "message": "Uploaded but extract failed: " + dmsg}
+        if delete_after:
+            _ptero_delete_file(panel, dest)  # best-effort cleanup; ignore result
+        return {"id": panel["id"], "name": panel["name"], "ok": True, "message": "extracted"}
 
     results = list(_EXECUTOR.map(_do, targets))
     ok_count = sum(1 for r in results if r["ok"])
@@ -980,6 +1060,7 @@ def api_panels_upload():
         "status": "success" if ok_count == len(results) else "partial",
         "dest": dest,
         "size": len(raw_bytes),
+        "decompress": decompress,
         "okCount": ok_count,
         "total": len(results),
         "results": results,

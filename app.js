@@ -802,6 +802,8 @@ Self-contained: no shared global state, IIFE wrapper.
         const fileInput = document.getElementById("adm-upload-file");
         const pathInput = document.getElementById("adm-upload-path");
         const allCb = document.getElementById("adm-upload-all");
+        const decompressCb = document.getElementById("adm-upload-decompress");
+        const deleteCb = document.getElementById("adm-upload-delete");
         const btn = document.getElementById("adm-upload-send");
         const results = document.getElementById("adm-upload-results");
 
@@ -810,6 +812,9 @@ Self-contained: no shared global state, IIFE wrapper.
 
         const path = (pathInput && pathInput.value || "").trim();
         if (!path) { showToast("Enter a destination path.", "error"); return; }
+
+        const decompress = !!(decompressCb && decompressCb.checked);
+        const deleteArchive = !!(deleteCb && deleteCb.checked);
 
         // Resolve target ids (null = server treats as all).
         let ids = null;
@@ -833,7 +838,9 @@ Self-contained: no shared global state, IIFE wrapper.
 
         const res = await api("/api/panels/upload", {
             method: "POST",
-            body: { path, filename: file.name, contentB64, ids },
+            body: { path, filename: file.name, contentB64, ids, decompress, deleteArchive },
+            // Extraction can take a while across many panels — allow longer.
+            timeoutMs: decompress ? 120_000 : 60_000,
         });
 
         if (btn) { btn.disabled = false; btn.innerHTML = original; }
@@ -856,7 +863,7 @@ Self-contained: no shared global state, IIFE wrapper.
             results.innerHTML = `
                 <div class="adm-upload-result-head">
                     Wrote <code>${escapeHtml(d.dest || path)}</code>
-                    (${escapeHtml(String(d.size))} bytes) — ${escapeHtml(String(d.okCount))}/${escapeHtml(String(d.total))} ok
+                    (${escapeHtml(String(d.size))} bytes)${d.decompress ? " + unarchive" : ""} — ${escapeHtml(String(d.okCount))}/${escapeHtml(String(d.total))} ok
                 </div>${rows}`;
         }
 
@@ -898,6 +905,14 @@ Self-contained: no shared global state, IIFE wrapper.
 
         const uploadSend = document.getElementById("adm-upload-send");
         if (uploadSend) uploadSend.addEventListener("click", sendUpload);
+
+        const uploadDecompress = document.getElementById("adm-upload-decompress");
+        const uploadDeleteWrap = document.getElementById("adm-upload-delete-wrap");
+        if (uploadDecompress && uploadDeleteWrap) {
+            uploadDecompress.addEventListener("change", () => {
+                uploadDeleteWrap.style.display = uploadDecompress.checked ? "" : "none";
+            });
+        }
 
         document.querySelectorAll("[data-modal-close]").forEach(el => {
             el.addEventListener("click", closeSettingsModal);
