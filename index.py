@@ -542,6 +542,56 @@ def _ptero_write_token_lines(panel, lines):
     return False, "Panel returned HTTP " + str(r.status_code) + ": " + r.text[:200]
 
 
+def _normalize_server_path(path):
+    """Normalise an arbitrary destination path on the Pterodactyl server.
+
+    Returns a leading-slash, single-line path with surrounding whitespace
+    stripped. Blocks parent-directory traversal so an upload can never
+    escape the server's data root."""
+    p = str(path or "").strip().replace("\\", "/")
+    if not p:
+        return None, "Destination path is required."
+    # Collapse duplicate slashes and resolve away any "." segments.
+    parts = []
+    for seg in p.split("/"):
+        seg = seg.strip()
+        if seg in ("", "."):
+            continue
+        if seg == "..":
+            return None, "Path traversal ('..') is not allowed."
+        parts.append(seg)
+    if not parts:
+        return None, "Destination path is required."
+    return "/" + "/".join(parts), None
+
+
+def _ptero_write_file(panel, dest_path, raw_bytes):
+    """Write raw bytes to ``dest_path`` on a panel's Pterodactyl server.
+
+    Uses the Client API ``files/write`` endpoint which creates parent
+    directories and overwrites any existing file. Returns (ok, message)."""
+    if not (panel.get("panelUrl") and panel.get("serverId") and panel.get("clientApiKey")):
+        return False, "Panel not configured."
+    url = "{}/api/client/servers/{}/files/write".format(panel["panelUrl"], panel["serverId"])
+    try:
+        r = requests.post(
+            url,
+            headers={
+                "Authorization": "Bearer " + panel["clientApiKey"],
+                "Accept": "application/json",
+                "Content-Type": "application/octet-stream",
+            },
+            params={"file": dest_path},
+            data=raw_bytes,
+            timeout=PTERO_TIMEOUT,
+        )
+    except requests.RequestException as e:
+        return False, "Write failed: " + str(e)
+    if 200 <= r.status_code < 300:
+        return True, "ok"
+    return False, "HTTP " + str(r.status_code) + ": " + r.text[:200]
+
+
 # ---------------------------------------------------------------------------
 # Config redact / merge / validate
 # ---------------------------------------------------------------------------
@@ -852,6 +902,87 @@ def api_panels_power():
         "status": "error",
         "message": "Panel rejected (" + str(resp.status_code) + "): " + resp.text[:200],
     }), 502
+
+
+@app.route("/api/panels/upload", methods=["POST"])
+def api_panels_upload():
+    """Upload a single file to a destination path on every configured panel.
+
+    Accepts JSON:
+      {
+        "path": "/config.yml",          # destination on each server
+        "filename": "config.yml",        # original name (used if path is a dir)
+        "contentB64": "<base64 bytes>",  # file contents
+        "ids": ["panel-1", ...]          # optional subset; default = all
+      }
+
+    Writes the same file to every targeted panel via the Pterodactyl
+    Client API in parallel. Returns a per-panel result list so the UI can
+    show which servers succeeded and which failed."""
+    if not _check_password():
+        return _unauthorized()
+
+    body = request.get_json(silent=True) or {}
+    raw_path = body.get("path")
+    filename = str(body.get("filename") or "").strip()
+    content_b64 = body.get("contentB64")
+
+    if not content_b64:
+        return jsonify({"status": "error", "message": "Missing file content."}), 400
+
+    try:
+        raw_bytes = base64.b64decode(content_b64)
+    except Exception as e:
+        return jsonify({"status": "error", "message": "Bad base64 content: " + str(e)}), 400
+
+    dest, err = _normalize_server_path(raw_path)
+    if err:
+        return jsonify({"status": "error", "message": err}), 400
+
+    # If the destination looks like a directory (trailing slash on input or
+    # no filename component), append the original filename.
+    looks_like_dir = str(raw_path or "").rstrip().endswith("/")
+    if looks_like_dir:
+        if not filename:
+            return jsonify({"status": "error", "message": "Path is a directory but no filename was given."}), 400
+        safe_name = filename.replace("\\", "/").split("/")[-1].strip()
+        if not safe_name or safe_name in (".", ".."):
+            return jsonify({"status": "error", "message": "Invalid filename."}), 400
+        dest = (dest.rstrip("/") + "/" + safe_name) if dest != "/" else "/" + safe_name
+
+    # Optional subset of panels by id.
+    wanted_ids = body.get("ids")
+    id_filter = None
+    if isinstance(wanted_ids, list) and wanted_ids:
+        id_filter = {str(x) for x in wanted_ids}
+
+    panels = _collect_panels()
+    targets = []
+    for p in panels:
+        if id_filter is not None and p["id"] not in id_filter:
+            continue
+        targets.append(p)
+
+    if not targets:
+        return jsonify({"status": "error", "message": "No matching panels."}), 400
+
+    def _do(panel):
+        if not (panel["panelUrl"] and panel["serverId"] and panel["clientApiKey"]):
+            return {"id": panel["id"], "name": panel["name"], "ok": False, "message": "Panel not configured."}
+        ok, msg = _ptero_write_file(panel, dest, raw_bytes)
+        return {"id": panel["id"], "name": panel["name"], "ok": ok, "message": msg}
+
+    results = list(_EXECUTOR.map(_do, targets))
+    ok_count = sum(1 for r in results if r["ok"])
+
+    return jsonify({
+        "status": "success" if ok_count == len(results) else "partial",
+        "dest": dest,
+        "size": len(raw_bytes),
+        "okCount": ok_count,
+        "total": len(results),
+        "results": results,
+    }), 200
 
 
 @app.route("/api/panels/<panel_id>", methods=["GET"])

@@ -31,6 +31,9 @@ Independent from any specific bot deployment.
         <span id="adm-status-text">Connecting…</span>
     </div>
     <div class="adm-actions">
+        <button id="adm-upload-btn" class="adm-btn adm-btn-ghost" type="button" title="Upload a file to every panel">
+            <span>⬆</span> Upload
+        </button>
         <button id="adm-settings-btn" class="adm-btn adm-btn-ghost" type="button" title="Edit configuration">
             <span>⚙</span> Settings
         </button>
@@ -83,6 +86,56 @@ Independent from any specific bot deployment.
             <button class="adm-btn adm-btn-ghost" type="button" data-modal-close>Cancel</button>
             <button id="adm-settings-save" class="adm-btn adm-btn-success" type="button">
                 <span>💾</span> Save &amp; Redeploy
+            </button>
+        </footer>
+    </div>
+</div>
+
+<!-- ============ UPLOAD MODAL ============ -->
+<div id="adm-upload-modal" class="adm-modal adm-hidden" role="dialog" aria-modal="true" aria-labelledby="adm-upload-title">
+    <div class="adm-modal-backdrop" data-upload-close></div>
+    <div class="adm-modal-card">
+        <header class="adm-modal-header">
+            <div>
+                <h2 id="adm-upload-title" class="adm-modal-title">Upload file to panels</h2>
+                <p class="adm-modal-sub">Push one file to a path on every configured Pterodactyl server.</p>
+            </div>
+            <button class="adm-modal-close" type="button" data-upload-close aria-label="Close">×</button>
+        </header>
+
+        <div class="adm-modal-body">
+            <div class="adm-upload-fields">
+                <label class="adm-field adm-field-wide">
+                    <span class="adm-field-label">File *</span>
+                    <input type="file" id="adm-upload-file" class="adm-field-input">
+                </label>
+
+                <label class="adm-field adm-field-wide">
+                    <span class="adm-field-label">Destination path on server *</span>
+                    <input type="text" id="adm-upload-path" class="adm-field-input mono"
+                           placeholder="/config.yml  or  /plugins/  (trailing / = folder, keeps filename)"
+                           autocomplete="off" spellcheck="false">
+                </label>
+
+                <div class="adm-field adm-field-wide">
+                    <span class="adm-field-label">Target panels</span>
+                    <div class="adm-upload-targets" id="adm-upload-targets">
+                        <label class="adm-upload-target-all">
+                            <input type="checkbox" id="adm-upload-all" checked>
+                            <span>All configured panels</span>
+                        </label>
+                        <div id="adm-upload-target-list" class="adm-upload-target-list adm-hidden"></div>
+                    </div>
+                </div>
+            </div>
+
+            <div id="adm-upload-results" class="adm-upload-results adm-hidden"></div>
+        </div>
+
+        <footer class="adm-modal-footer">
+            <button class="adm-btn adm-btn-ghost" type="button" data-upload-close>Cancel</button>
+            <button id="adm-upload-send" class="adm-btn adm-btn-success" type="button">
+                <span>⬆</span> Upload to panels
             </button>
         </footer>
     </div>

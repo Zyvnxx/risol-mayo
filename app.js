@@ -721,6 +721,126 @@ Self-contained: no shared global state, IIFE wrapper.
     }
 
     /* ===================================================================
+     * Upload file to all panels
+     * =================================================================== */
+    function openUploadModal() {
+        const m = document.getElementById("adm-upload-modal");
+        if (!m) return;
+        m.classList.remove("adm-hidden");
+        document.body.style.overflow = "hidden";
+        const results = document.getElementById("adm-upload-results");
+        if (results) { results.classList.add("adm-hidden"); results.innerHTML = ""; }
+        loadUploadTargets();
+    }
+
+    function closeUploadModal() {
+        const m = document.getElementById("adm-upload-modal");
+        if (!m) return;
+        m.classList.add("adm-hidden");
+        document.body.style.overflow = "";
+    }
+
+    // Populate the per-panel checkbox list from the current config.
+    async function loadUploadTargets() {
+        const listEl = document.getElementById("adm-upload-target-list");
+        if (!listEl) return;
+        listEl.innerHTML = '<div class="adm-loading">Loading panels…</div>';
+        const res = await api("/api/panels?status=0");
+        const panels = (res && res.ok && res.data && res.data.panels) || [];
+        if (!panels.length) {
+            listEl.innerHTML = '<div class="adm-empty"><strong>No panels configured.</strong></div>';
+            return;
+        }
+        listEl.innerHTML = panels.map(p => `
+            <label class="adm-upload-target">
+                <input type="checkbox" class="adm-upload-target-cb" value="${escapeHtml(p.id)}"
+                       ${p.configured ? "checked" : "disabled"}>
+                <span>${escapeHtml(p.name)} <span class="adm-upload-target-id">${escapeHtml(p.id)}</span></span>
+                ${p.configured ? "" : '<span class="adm-upload-target-warn">not configured</span>'}
+            </label>`).join("");
+    }
+
+    function readFileAsBase64(file) {
+        return new Promise((resolve, reject) => {
+            const reader = new FileReader();
+            reader.onload = () => {
+                // result is "data:<mime>;base64,XXXX" — keep only the payload.
+                const s = String(reader.result || "");
+                const comma = s.indexOf(",");
+                resolve(comma >= 0 ? s.slice(comma + 1) : s);
+            };
+            reader.onerror = () => reject(reader.error || new Error("read failed"));
+            reader.readAsDataURL(file);
+        });
+    }
+
+    async function sendUpload() {
+        const fileInput = document.getElementById("adm-upload-file");
+        const pathInput = document.getElementById("adm-upload-path");
+        const allCb = document.getElementById("adm-upload-all");
+        const btn = document.getElementById("adm-upload-send");
+        const results = document.getElementById("adm-upload-results");
+
+        const file = fileInput && fileInput.files && fileInput.files[0];
+        if (!file) { showToast("Choose a file first.", "error"); return; }
+
+        const path = (pathInput && pathInput.value || "").trim();
+        if (!path) { showToast("Enter a destination path.", "error"); return; }
+
+        // Resolve target ids (null = server treats as all).
+        let ids = null;
+        if (!(allCb && allCb.checked)) {
+            ids = Array.from(document.querySelectorAll(".adm-upload-target-cb:checked"))
+                .map(cb => cb.value);
+            if (!ids.length) { showToast("Select at least one panel.", "error"); return; }
+        }
+
+        const original = btn ? btn.innerHTML : null;
+        if (btn) { btn.disabled = true; btn.innerHTML = "<span>⏳</span> Uploading…"; }
+
+        let contentB64;
+        try {
+            contentB64 = await readFileAsBase64(file);
+        } catch (e) {
+            if (btn) { btn.disabled = false; btn.innerHTML = original; }
+            showToast("Could not read file: " + (e && e.message || e), "error");
+            return;
+        }
+
+        const res = await api("/api/panels/upload", {
+            method: "POST",
+            body: { path, filename: file.name, contentB64, ids },
+        });
+
+        if (btn) { btn.disabled = false; btn.innerHTML = original; }
+
+        if (!res || !res.ok || !res.data) {
+            const msg = (res && res.data && res.data.message) || "Upload failed.";
+            showToast(msg, "error");
+            return;
+        }
+
+        const d = res.data;
+        if (results) {
+            results.classList.remove("adm-hidden");
+            const rows = (d.results || []).map(r => `
+                <div class="adm-upload-result-row ${r.ok ? "is-ok" : "is-err"}">
+                    <span class="adm-upload-result-icon">${r.ok ? "✓" : "✕"}</span>
+                    <span class="adm-upload-result-name">${escapeHtml(r.name)} <span class="adm-upload-target-id">${escapeHtml(r.id)}</span></span>
+                    <span class="adm-upload-result-msg">${escapeHtml(r.message || "")}</span>
+                </div>`).join("");
+            results.innerHTML = `
+                <div class="adm-upload-result-head">
+                    Wrote <code>${escapeHtml(d.dest || path)}</code>
+                    (${escapeHtml(String(d.size))} bytes) — ${escapeHtml(String(d.okCount))}/${escapeHtml(String(d.total))} ok
+                </div>${rows}`;
+        }
+
+        showToast(`Upload: ${d.okCount}/${d.total} panel(s) ok.`,
+                  d.okCount === d.total ? "success" : "warn");
+    }
+
+    /* ===================================================================
      * Boot
      * =================================================================== */
     document.addEventListener("DOMContentLoaded", () => {
@@ -737,11 +857,29 @@ Self-contained: no shared global state, IIFE wrapper.
         const settingsBtn = document.getElementById("adm-settings-btn");
         if (settingsBtn) settingsBtn.addEventListener("click", openSettingsModal);
 
+        const uploadBtn = document.getElementById("adm-upload-btn");
+        if (uploadBtn) uploadBtn.addEventListener("click", openUploadModal);
+
+        document.querySelectorAll("[data-upload-close]").forEach(el => {
+            el.addEventListener("click", closeUploadModal);
+        });
+
+        const uploadAll = document.getElementById("adm-upload-all");
+        const uploadList = document.getElementById("adm-upload-target-list");
+        if (uploadAll && uploadList) {
+            uploadAll.addEventListener("change", () => {
+                uploadList.classList.toggle("adm-hidden", uploadAll.checked);
+            });
+        }
+
+        const uploadSend = document.getElementById("adm-upload-send");
+        if (uploadSend) uploadSend.addEventListener("click", sendUpload);
+
         document.querySelectorAll("[data-modal-close]").forEach(el => {
             el.addEventListener("click", closeSettingsModal);
         });
         document.addEventListener("keydown", e => {
-            if (e.key === "Escape") closeSettingsModal();
+            if (e.key === "Escape") { closeSettingsModal(); closeUploadModal(); }
         });
 
         const addBtn = document.getElementById("adm-add-panel");
