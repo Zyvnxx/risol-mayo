@@ -39,11 +39,11 @@ single-panel "my server" view.
     border-radius: 16px;
     display: grid;
     place-items: center;
-    background: linear-gradient(135deg, var(--adm-accent), var(--adm-accent-2));
-    color: #06060d;
+    background: linear-gradient(135deg, #f4f4f5, #a1a1aa);
+    color: #0a0a0b;
     font-size: 26px;
     font-weight: 800;
-    box-shadow: 0 12px 28px rgba(76, 201, 240, 0.35);
+    box-shadow: 0 12px 28px rgba(0, 0, 0, 0.45);
 }
 
 .cust-login-title {
@@ -179,9 +179,9 @@ single-panel "my server" view.
 }
 
 .cust-panel-error {
-    background: rgba(248, 113, 113, 0.08);
-    border: 1px solid rgba(248, 113, 113, 0.30);
-    color: var(--adm-danger);
+    background: rgba(255, 255, 255, 0.04);
+    border: 1px solid var(--adm-border);
+    color: var(--adm-text-2);
     border-radius: var(--adm-radius-md);
     padding: 12px 14px;
     font-size: 13px;
@@ -215,25 +215,26 @@ single-panel "my server" view.
     font-family: var(--adm-mono);
     letter-spacing: 0.01em;
 }
-/* <= 7 days remaining: amber warning */
+/* <= 7 days remaining: subtle highlight */
 .cust-countdown.is-warn {
-    background: rgba(245, 158, 11, 0.10);
-    border-color: rgba(245, 158, 11, 0.40);
+    background: rgba(255, 255, 255, 0.07);
+    border-color: var(--adm-border-strong);
     animation: cust-pulse 1.6s ease-in-out infinite;
 }
-.cust-countdown.is-warn .cust-countdown-value { color: var(--adm-warn, #f59e0b); }
-.cust-countdown.is-warn .cust-countdown-label { color: var(--adm-warn, #f59e0b); }
-/* expired: red */
+.cust-countdown.is-warn .cust-countdown-value { color: var(--adm-text-0); }
+.cust-countdown.is-warn .cust-countdown-label { color: var(--adm-text-1); }
+/* expired: dashed emphasis */
 .cust-countdown.is-expired {
-    background: rgba(248, 113, 113, 0.10);
-    border-color: rgba(248, 113, 113, 0.45);
+    background: rgba(255, 255, 255, 0.04);
+    border-color: var(--adm-border-strong);
+    border-style: dashed;
 }
 .cust-countdown.is-expired .cust-countdown-value,
-.cust-countdown.is-expired .cust-countdown-label { color: var(--adm-danger); }
+.cust-countdown.is-expired .cust-countdown-label { color: var(--adm-text-2); }
 
 @keyframes cust-pulse {
-    0%, 100% { box-shadow: 0 0 0 0 rgba(245, 158, 11, 0.0); }
-    50%      { box-shadow: 0 0 0 4px rgba(245, 158, 11, 0.18); }
+    0%, 100% { box-shadow: 0 0 0 0 rgba(255, 255, 255, 0.0); }
+    50%      { box-shadow: 0 0 0 4px rgba(255, 255, 255, 0.10); }
 }
 
 /* ============ TOKEN EDITOR ============ */
