@@ -109,12 +109,15 @@ Self-contained: no shared global state, IIFE wrapper.
     /* ===================================================================
      * Fetch helpers
      * =================================================================== */
-    async function api(path, { method = "GET", body = null } = {}) {
+    async function api(path, { method = "GET", body = null, timeoutMs = 30_000 } = {}) {
+        const ctrl = (typeof AbortController !== "undefined") ? new AbortController() : null;
+        const timer = ctrl ? setTimeout(() => ctrl.abort(), timeoutMs) : null;
         try {
             const opts = {
                 method,
                 headers: { password: PASSWORD, "Content-Type": "application/json" },
             };
+            if (ctrl) opts.signal = ctrl.signal;
             if (body) opts.body = JSON.stringify(body);
             const r = await fetch(path, opts);
             if (r.status === 401 || r.status === 403) {
@@ -126,8 +129,15 @@ Self-contained: no shared global state, IIFE wrapper.
             const data = await r.json().catch(() => ({}));
             return { ok: r.ok, status: r.status, data };
         } catch (err) {
+            const aborted = err && err.name === "AbortError";
             console.error("admin api error:", err);
-            return { ok: false, status: 0, data: { message: String(err && err.message || err) } };
+            return {
+                ok: false,
+                status: 0,
+                data: { message: aborted ? "Request timed out." : String(err && err.message || err) },
+            };
+        } finally {
+            if (timer) clearTimeout(timer);
         }
     }
 
@@ -176,13 +186,29 @@ Self-contained: no shared global state, IIFE wrapper.
 
         const jobs = panels.map(p =>
             api("/api/panels/" + encodeURIComponent(p.id)).then(res => {
+                let full;
                 if (res && res.ok && res.data && res.data.panel) {
-                    const full = res.data.panel;
-                    const slot = byId.get(p.id);
-                    if (slot) Object.assign(slot, full);
-                    upsertCard(full);
+                    full = res.data.panel;
+                } else {
+                    // The status fetch failed (timeout, network, 5xx, …).
+                    // Mark the card unreachable instead of leaving it stuck
+                    // on "Checking…" forever.
+                    const msg = (res && res.data && res.data.message) || "Status request failed.";
+                    full = { ...p, status: { reachable: false, error: msg } };
                 }
-            }).catch(() => {})
+                const slot = byId.get(p.id);
+                if (slot) Object.assign(slot, full);
+                upsertCard(full);
+            }).catch(err => {
+                // Defensive: even an unexpected throw shouldn't strand a card.
+                const full = {
+                    ...p,
+                    status: { reachable: false, error: String(err && err.message || err) },
+                };
+                const slot = byId.get(p.id);
+                if (slot) Object.assign(slot, full);
+                upsertCard(full);
+            })
         );
 
         Promise.allSettled(jobs).then(() => renderSummary(merged));
