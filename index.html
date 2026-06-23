@@ -130,6 +130,52 @@ Independent from any specific bot deployment.
         </div>
     </section>
 
+    <!-- ============ FILE DEPLOY ============ -->
+    <section class="adm-deploy" id="adm-deploy-section">
+        <div class="adm-deploy-header">
+            <div>
+                <h2 class="adm-bulk-title">📦 Deploy Files</h2>
+                <p class="adm-bulk-sub">Upload file(s) dan tulis ke semua panel Pterodactyl sekaligus.</p>
+            </div>
+        </div>
+        <div class="adm-deploy-body">
+            <div id="adm-drop-zone" class="adm-drop-zone" tabindex="0" role="button" aria-label="Drop files here or click to browse">
+                <div class="adm-drop-icon">📂</div>
+                <div class="adm-drop-text">Drop files here or <span class="adm-drop-link">click to browse</span></div>
+                <div class="adm-drop-hint">Multiple files — .py .json .toml .txt dll</div>
+                <input type="file" id="adm-file-input" multiple accept="*/*" style="display:none">
+            </div>
+            <div id="adm-file-list" class="adm-file-list adm-hidden"></div>
+            <div class="adm-deploy-options">
+                <div class="adm-deploy-opt">
+                    <label class="adm-deploy-label" for="adm-remote-path">Remote path (direktori tujuan di server)</label>
+                    <input type="text" id="adm-remote-path" class="adm-deploy-input"
+                           placeholder="cogs/  atau  config/  (kosongkan = root)" value="">
+                    <span class="adm-deploy-hint">Contoh: <code>cogs/</code> &rarr; file ditulis ke <code>/home/container/cogs/namafile.py</code></span>
+                </div>
+                <div class="adm-deploy-opt adm-deploy-opt--row">
+                    <label class="adm-deploy-label">Target panels</label>
+                    <div id="adm-panel-checkboxes" class="adm-panel-checks">
+                        <span style="color:var(--adm-text-muted);font-size:13px">Loading…</span>
+                    </div>
+                </div>
+                <div class="adm-deploy-opt adm-deploy-opt--row">
+                    <label class="adm-deploy-label" for="adm-restart-after">Restart semua panel setelah upload?</label>
+                    <label class="adm-switch">
+                        <input type="checkbox" id="adm-restart-after">
+                        <span class="adm-switch-slider"></span>
+                    </label>
+                </div>
+            </div>
+            <div class="adm-deploy-actions">
+                <button id="adm-deploy-btn" class="adm-btn adm-btn-success" type="button" disabled>
+                    <span>🚀</span> Deploy ke Semua Panel
+                </button>
+            </div>
+            <div id="adm-deploy-results" class="adm-deploy-results adm-hidden"></div>
+        </div>
+    </section>
+
     <!-- panel grid -->
     <section class="adm-grid" id="adm-grid">
         <div class="adm-loading">Loading panels…</div>
