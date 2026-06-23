@@ -970,37 +970,38 @@ def api_panels_power():
 
 @app.route("/api/panels/upload", methods=["POST"])
 def api_panels_upload():
-    """Upload a single file to a destination path on every configured panel.
+    """Upload one or many files to a destination path on every panel.
 
     Accepts either:
-      * multipart/form-data with a ``file`` part plus form fields
-        ``path``, ``decompress``, ``deleteArchive``, ``ids`` (JSON array
-        string). Preferred — streams binary, no base64 bloat or UI freeze.
+      * multipart/form-data with one or more ``file`` parts plus form
+        fields ``path``, ``decompress``, ``deleteArchive``, ``ids`` (JSON
+        array string). Preferred — streams binary, no base64 bloat.
       * JSON: {"path", "filename", "contentB64", "ids", "decompress"} —
-        kept as a fallback for older clients.
+        single-file fallback for older clients.
 
-    Writes the same file to every targeted panel via the Pterodactyl
-    Client API in parallel. Returns a per-panel result list so the UI can
-    show which servers succeeded and which failed.
+    When several files are uploaded (or the path ends with ``/``) the path
+    is treated as a folder and each file is written as
+    ``<folder>/<original-name>``. A single file with a non-folder path is
+    written to that exact path.
 
-    Optional ``decompress: true`` extracts the uploaded archive (zip, tar,
-    tar.gz, …) into its directory afterwards, like Pterodactyl's Unarchive
-    action, then removes the archive file."""
+    Writes to every targeted panel via the Pterodactyl Client API in
+    parallel. Returns a per-panel result list.
+
+    Optional ``decompress: true`` extracts each uploaded archive (zip,
+    tar, tar.gz, …) into its directory afterwards, like Pterodactyl's
+    Unarchive action, then removes the archive file."""
     if not _check_password():
         return _unauthorized()
 
     raw_path = None
-    filename = ""
-    raw_bytes = None
     decompress = False
     delete_after = True
     wanted_ids = None
+    files = []  # list of (filename, raw_bytes)
 
-    upload = request.files.get("file") if request.files else None
-    if upload is not None:
+    uploads = request.files.getlist("file") if request.files else []
+    if uploads:
         # ---- multipart/form-data path (binary, preferred) ----
-        filename = str(upload.filename or "").strip()
-        raw_bytes = upload.read()
         form = request.form
         raw_path = form.get("path")
         decompress = str(form.get("decompress") or "").lower() in ("1", "true", "yes", "on")
@@ -1013,8 +1014,13 @@ def api_panels_upload():
                     wanted_ids = parsed
             except Exception:
                 wanted_ids = None
+        for up in uploads:
+            name = str(up.filename or "").strip()
+            data = up.read()
+            if name and data:
+                files.append((name, data))
     else:
-        # ---- JSON base64 fallback ----
+        # ---- JSON base64 fallback (single file) ----
         body = request.get_json(silent=True) or {}
         raw_path = body.get("path")
         filename = str(body.get("filename") or "").strip()
@@ -1025,29 +1031,38 @@ def api_panels_upload():
         if not content_b64:
             return jsonify({"status": "error", "message": "Missing file content."}), 400
         try:
-            raw_bytes = base64.b64decode(content_b64)
+            data = base64.b64decode(content_b64)
         except Exception as e:
             return jsonify({"status": "error", "message": "Bad base64 content: " + str(e)}), 400
+        if data:
+            files.append((filename, data))
 
     delete_after = bool(decompress and delete_after)
 
-    if raw_bytes is None or len(raw_bytes) == 0:
-        return jsonify({"status": "error", "message": "Empty or missing file."}), 400
+    if not files:
+        return jsonify({"status": "error", "message": "No files provided."}), 400
 
-    dest, err = _normalize_server_path(raw_path)
+    base, err = _normalize_server_path(raw_path)
     if err:
         return jsonify({"status": "error", "message": err}), 400
 
-    # If the destination looks like a directory (trailing slash on input or
-    # no filename component), append the original filename.
-    looks_like_dir = str(raw_path or "").rstrip().endswith("/")
-    if looks_like_dir:
-        if not filename:
-            return jsonify({"status": "error", "message": "Path is a directory but no filename was given."}), 400
-        safe_name = filename.replace("\\", "/").split("/")[-1].strip()
-        if not safe_name or safe_name in (".", ".."):
-            return jsonify({"status": "error", "message": "Invalid filename."}), 400
-        dest = (dest.rstrip("/") + "/" + safe_name) if dest != "/" else "/" + safe_name
+    # Treat the path as a folder when it ends with "/" OR more than one
+    # file was sent. Otherwise it's the exact destination for one file.
+    as_folder = str(raw_path or "").rstrip().endswith("/") or len(files) > 1
+
+    # Build the concrete (dest_path, bytes) list, validating each name.
+    planned = []  # list of (dest_path, raw_bytes)
+    for name, data in files:
+        if as_folder:
+            safe_name = name.replace("\\", "/").split("/")[-1].strip()
+            if not safe_name or safe_name in (".", ".."):
+                return jsonify({"status": "error", "message": "Invalid filename: " + str(name)}), 400
+            dest = (base.rstrip("/") + "/" + safe_name) if base != "/" else "/" + safe_name
+        else:
+            dest = base
+        planned.append((dest, data))
+
+    total_size = sum(len(d) for _, d in planned)
 
     # Optional subset of panels by id.
     id_filter = None
@@ -1067,27 +1082,32 @@ def api_panels_upload():
     def _do(panel):
         if not (panel["panelUrl"] and panel["serverId"] and panel["clientApiKey"]):
             return {"id": panel["id"], "name": panel["name"], "ok": False, "message": "Panel not configured."}
-        ok, msg = _ptero_write_file(panel, dest, raw_bytes)
-        if not ok:
-            return {"id": panel["id"], "name": panel["name"], "ok": False, "message": msg}
-        if not decompress:
-            return {"id": panel["id"], "name": panel["name"], "ok": True, "message": "ok"}
-        # Extract the archive into its directory, then optionally remove it.
-        dok, dmsg = _ptero_decompress(panel, dest)
-        if not dok:
-            return {"id": panel["id"], "name": panel["name"], "ok": False,
-                    "message": "Uploaded but extract failed: " + dmsg}
-        if delete_after:
-            _ptero_delete_file(panel, dest)  # best-effort cleanup; ignore result
-        return {"id": panel["id"], "name": panel["name"], "ok": True, "message": "extracted"}
+        written = 0
+        for dest, data in planned:
+            ok, msg = _ptero_write_file(panel, dest, data)
+            if not ok:
+                return {"id": panel["id"], "name": panel["name"], "ok": False,
+                        "message": "Failed on {}: {}".format(dest, msg)}
+            written += 1
+            if decompress:
+                dok, dmsg = _ptero_decompress(panel, dest)
+                if not dok:
+                    return {"id": panel["id"], "name": panel["name"], "ok": False,
+                            "message": "Uploaded but extract failed on {}: {}".format(dest, dmsg)}
+                if delete_after:
+                    _ptero_delete_file(panel, dest)  # best-effort cleanup
+        verb = "extracted" if decompress else "ok"
+        return {"id": panel["id"], "name": panel["name"], "ok": True,
+                "message": "{} ({} file{})".format(verb, written, "" if written == 1 else "s")}
 
     results = list(_EXECUTOR.map(_do, targets))
     ok_count = sum(1 for r in results if r["ok"])
 
     return jsonify({
         "status": "success" if ok_count == len(results) else "partial",
-        "dest": dest,
-        "size": len(raw_bytes),
+        "dest": base if as_folder else (planned[0][0] if planned else base),
+        "fileCount": len(planned),
+        "size": total_size,
         "decompress": decompress,
         "okCount": ok_count,
         "total": len(results),

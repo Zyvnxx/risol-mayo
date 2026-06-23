@@ -798,11 +798,15 @@ Self-contained: no shared global state, IIFE wrapper.
         const btn = document.getElementById("adm-upload-send");
         const results = document.getElementById("adm-upload-results");
 
-        const file = fileInput && fileInput.files && fileInput.files[0];
-        if (!file) { showToast("Choose a file first.", "error"); return; }
+        const files = (fileInput && fileInput.files) ? Array.from(fileInput.files) : [];
+        if (!files.length) { showToast("Choose at least one file.", "error"); return; }
 
-        const path = (pathInput && pathInput.value || "").trim();
+        let path = (pathInput && pathInput.value || "").trim();
         if (!path) { showToast("Enter a destination path.", "error"); return; }
+
+        // Multiple files always need a folder destination — auto-append "/"
+        // so the server treats the path as a directory.
+        if (files.length > 1 && !path.endsWith("/")) path += "/";
 
         const decompress = !!(decompressCb && decompressCb.checked);
         const deleteArchive = !!(deleteCb && deleteCb.checked);
@@ -818,11 +822,11 @@ Self-contained: no shared global state, IIFE wrapper.
         const original = btn ? btn.innerHTML : null;
         if (btn) { btn.disabled = true; btn.innerHTML = "<span>⏳</span> Uploading…"; }
 
-        // Send as multipart/form-data: streams the file as binary so we
+        // Send as multipart/form-data: streams the files as binary so we
         // avoid base64 (which inflates size ~33% and can freeze the tab
-        // on large files).
+        // on large files). Multiple "file" parts = multiple files.
         const fd = new FormData();
-        fd.append("file", file, file.name);
+        for (const f of files) fd.append("file", f, f.name);
         fd.append("path", path);
         fd.append("decompress", decompress ? "true" : "false");
         fd.append("deleteArchive", deleteArchive ? "true" : "false");
@@ -854,7 +858,7 @@ Self-contained: no shared global state, IIFE wrapper.
                 </div>`).join("");
             results.innerHTML = `
                 <div class="adm-upload-result-head">
-                    Wrote <code>${escapeHtml(d.dest || path)}</code>
+                    Wrote ${escapeHtml(String(d.fileCount || 1))} file(s) to <code>${escapeHtml(d.dest || path)}</code>
                     (${escapeHtml(String(d.size))} bytes)${d.decompress ? " + unarchive" : ""} — ${escapeHtml(String(d.okCount))}/${escapeHtml(String(d.total))} ok
                 </div>${rows}`;
         }
