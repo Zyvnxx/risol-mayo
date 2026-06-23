@@ -185,7 +185,7 @@ Self-contained: no shared global state, IIFE wrapper.
         const byId = new Map(merged.map(p => [p.id, p]));
 
         const jobs = panels.map(p =>
-            api("/api/panels/" + encodeURIComponent(p.id)).then(res => {
+            api("/api/panels/status", { method: "POST", body: { id: p.id } }).then(res => {
                 let full;
                 if (res && res.ok && res.data && res.data.panel) {
                     full = res.data.panel;

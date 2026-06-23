@@ -986,6 +986,27 @@ def api_panels_upload():
     }), 200
 
 
+@app.route("/api/panels/status", methods=["POST"])
+def api_panel_status():
+    """Live status for a single panel, looked up by id in the JSON body.
+
+    Sending the id in the body (instead of the URL path) avoids edge
+    routers mangling ids that contain spaces, '#', '/', etc. — which made
+    the path-based route return "Unknown panel id" for those panels."""
+    if not _check_password():
+        return _unauthorized()
+    body = request.get_json(silent=True) or {}
+    pid = str(body.get("id") or "").strip()
+    panel = next((p for p in _collect_panels() if p["id"] == pid), None)
+    if panel is None:
+        return jsonify({"status": "error", "message": "Unknown panel id."}), 404
+    return jsonify({
+        "status": "success",
+        "panel": _safe_view(panel, True),
+        "ts": int(time.time()),
+    }), 200
+
+
 @app.route("/api/panels/<panel_id>", methods=["GET"])
 def api_panel_one(panel_id):
     """Status for a single panel.
