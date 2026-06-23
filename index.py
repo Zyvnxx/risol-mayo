@@ -58,6 +58,7 @@ STATIC_FILES = {
     "style.css":    "text/css; charset=utf-8",
     "customer.js":  "application/javascript; charset=utf-8",
     "customer.css": "text/css; charset=utf-8",
+    "logo.png":     "image/png",
 }
 
 
