@@ -111,12 +111,17 @@ Self-contained: no shared global state, IIFE wrapper.
         const ctrl = (typeof AbortController !== "undefined") ? new AbortController() : null;
         const timer = ctrl ? setTimeout(() => ctrl.abort(), timeoutMs) : null;
         try {
+            const isForm = (typeof FormData !== "undefined") && (body instanceof FormData);
             const opts = {
                 method,
-                headers: { password: PASSWORD, "Content-Type": "application/json" },
+                // For FormData, let the browser set Content-Type (with the
+                // multipart boundary). Only send JSON content-type otherwise.
+                headers: isForm
+                    ? { password: PASSWORD }
+                    : { password: PASSWORD, "Content-Type": "application/json" },
             };
             if (ctrl) opts.signal = ctrl.signal;
-            if (body) opts.body = JSON.stringify(body);
+            if (body) opts.body = isForm ? body : JSON.stringify(body);
             const r = await fetch(path, opts);
             if (r.status === 401 || r.status === 403) {
                 localStorage.removeItem("adm_password");
@@ -784,20 +789,6 @@ Self-contained: no shared global state, IIFE wrapper.
             </label>`).join("");
     }
 
-    function readFileAsBase64(file) {
-        return new Promise((resolve, reject) => {
-            const reader = new FileReader();
-            reader.onload = () => {
-                // result is "data:<mime>;base64,XXXX" — keep only the payload.
-                const s = String(reader.result || "");
-                const comma = s.indexOf(",");
-                resolve(comma >= 0 ? s.slice(comma + 1) : s);
-            };
-            reader.onerror = () => reject(reader.error || new Error("read failed"));
-            reader.readAsDataURL(file);
-        });
-    }
-
     async function sendUpload() {
         const fileInput = document.getElementById("adm-upload-file");
         const pathInput = document.getElementById("adm-upload-path");
@@ -827,18 +818,19 @@ Self-contained: no shared global state, IIFE wrapper.
         const original = btn ? btn.innerHTML : null;
         if (btn) { btn.disabled = true; btn.innerHTML = "<span>⏳</span> Uploading…"; }
 
-        let contentB64;
-        try {
-            contentB64 = await readFileAsBase64(file);
-        } catch (e) {
-            if (btn) { btn.disabled = false; btn.innerHTML = original; }
-            showToast("Could not read file: " + (e && e.message || e), "error");
-            return;
-        }
+        // Send as multipart/form-data: streams the file as binary so we
+        // avoid base64 (which inflates size ~33% and can freeze the tab
+        // on large files).
+        const fd = new FormData();
+        fd.append("file", file, file.name);
+        fd.append("path", path);
+        fd.append("decompress", decompress ? "true" : "false");
+        fd.append("deleteArchive", deleteArchive ? "true" : "false");
+        if (ids) fd.append("ids", JSON.stringify(ids));
 
         const res = await api("/api/panels/upload", {
             method: "POST",
-            body: { path, filename: file.name, contentB64, ids, decompress, deleteArchive },
+            body: fd,
             // Extraction can take a while across many panels — allow longer.
             timeoutMs: decompress ? 120_000 : 60_000,
         });

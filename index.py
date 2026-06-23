@@ -972,13 +972,12 @@ def api_panels_power():
 def api_panels_upload():
     """Upload a single file to a destination path on every configured panel.
 
-    Accepts JSON:
-      {
-        "path": "/config.yml",          # destination on each server
-        "filename": "config.yml",        # original name (used if path is a dir)
-        "contentB64": "<base64 bytes>",  # file contents
-        "ids": ["panel-1", ...]          # optional subset; default = all
-      }
+    Accepts either:
+      * multipart/form-data with a ``file`` part plus form fields
+        ``path``, ``decompress``, ``deleteArchive``, ``ids`` (JSON array
+        string). Preferred — streams binary, no base64 bloat or UI freeze.
+      * JSON: {"path", "filename", "contentB64", "ids", "decompress"} —
+        kept as a fallback for older clients.
 
     Writes the same file to every targeted panel via the Pterodactyl
     Client API in parallel. Returns a per-panel result list so the UI can
@@ -990,20 +989,50 @@ def api_panels_upload():
     if not _check_password():
         return _unauthorized()
 
-    body = request.get_json(silent=True) or {}
-    raw_path = body.get("path")
-    filename = str(body.get("filename") or "").strip()
-    content_b64 = body.get("contentB64")
-    decompress = bool(body.get("decompress"))
-    delete_after = decompress and body.get("deleteArchive", True)
+    raw_path = None
+    filename = ""
+    raw_bytes = None
+    decompress = False
+    delete_after = True
+    wanted_ids = None
 
-    if not content_b64:
-        return jsonify({"status": "error", "message": "Missing file content."}), 400
+    upload = request.files.get("file") if request.files else None
+    if upload is not None:
+        # ---- multipart/form-data path (binary, preferred) ----
+        filename = str(upload.filename or "").strip()
+        raw_bytes = upload.read()
+        form = request.form
+        raw_path = form.get("path")
+        decompress = str(form.get("decompress") or "").lower() in ("1", "true", "yes", "on")
+        delete_after = str(form.get("deleteArchive") or "true").lower() in ("1", "true", "yes", "on")
+        ids_raw = form.get("ids")
+        if ids_raw:
+            try:
+                parsed = json.loads(ids_raw)
+                if isinstance(parsed, list):
+                    wanted_ids = parsed
+            except Exception:
+                wanted_ids = None
+    else:
+        # ---- JSON base64 fallback ----
+        body = request.get_json(silent=True) or {}
+        raw_path = body.get("path")
+        filename = str(body.get("filename") or "").strip()
+        content_b64 = body.get("contentB64")
+        decompress = bool(body.get("decompress"))
+        delete_after = bool(body.get("deleteArchive", True))
+        wanted_ids = body.get("ids")
+        if not content_b64:
+            return jsonify({"status": "error", "message": "Missing file content."}), 400
+        try:
+            raw_bytes = base64.b64decode(content_b64)
+        except Exception as e:
+            return jsonify({"status": "error", "message": "Bad base64 content: " + str(e)}), 400
 
-    try:
-        raw_bytes = base64.b64decode(content_b64)
-    except Exception as e:
-        return jsonify({"status": "error", "message": "Bad base64 content: " + str(e)}), 400
+    delete_after = bool(decompress and delete_after)
+
+    if raw_bytes is None or len(raw_bytes) == 0:
+        return jsonify({"status": "error", "message": "Empty or missing file."}), 400
 
     dest, err = _normalize_server_path(raw_path)
     if err:
@@ -1021,7 +1050,6 @@ def api_panels_upload():
         dest = (dest.rstrip("/") + "/" + safe_name) if dest != "/" else "/" + safe_name
 
     # Optional subset of panels by id.
-    wanted_ids = body.get("ids")
     id_filter = None
     if isinstance(wanted_ids, list) and wanted_ids:
         id_filter = {str(x) for x in wanted_ids}
