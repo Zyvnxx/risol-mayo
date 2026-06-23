@@ -315,7 +315,51 @@ code {
     border-radius: 999px;
 }
 
-/* ============ DEPLOY RESULTS ============ */
+/* ============ UPLOAD ZONE ============ */
+.adm-upload-zone {
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+    justify-content: center;
+    gap: 6px;
+    border: 2px dashed rgba(168, 85, 247, 0.40);
+    border-radius: 12px;
+    padding: 28px 20px;
+    cursor: pointer;
+    background: rgba(168, 85, 247, 0.05);
+    transition: background 0.15s ease, border-color 0.15s ease;
+    text-align: center;
+}
+.adm-upload-zone:hover {
+    background: rgba(168, 85, 247, 0.10);
+    border-color: rgba(168, 85, 247, 0.70);
+}
+.adm-upload-icon { font-size: 28px; }
+.adm-upload-label { font-size: 14px; font-weight: 700; color: var(--adm-text); }
+.adm-upload-hint  { font-size: 12px; color: var(--adm-muted); }
+
+.adm-upload-preview {
+    max-height: 200px;
+    overflow-y: auto;
+    border: 1px solid var(--adm-border);
+    border-radius: 10px;
+    padding: 6px;
+    background: rgba(0,0,0,0.15);
+    min-height: 48px;
+    display: flex;
+    flex-direction: column;
+    gap: 2px;
+}
+.adm-upload-file-row {
+    display: flex;
+    align-items: center;
+    gap: 10px;
+    padding: 6px 10px;
+    border-radius: 8px;
+    font-size: 13px;
+    color: var(--adm-text);
+    background: rgba(255,255,255,0.02);
+}
 .adm-deploy-result {
     margin-top: 8px;
     border: 1px solid var(--adm-border);

@@ -504,22 +504,22 @@ Self-contained: no shared global state, IIFE wrapper.
     }
 
     /* ===================================================================
-     * GitHub Deploy Modal
+     * Upload & Deploy Modal — upload files directly to all Pterodactyl servers
      * =================================================================== */
-    let __ghSelectedFiles = new Set();
-    let __ghCurrentPath = "";
-    let __ghAllPanels = true;
-    let __ghSelectedPanels = new Set();
 
-    async function openDeployModal() {
+    function openDeployModal() {
         const modal = document.getElementById("adm-deploy-modal");
         if (!modal) return;
+        // Reset state
+        const input = document.getElementById("adm-upload-input");
+        if (input) input.value = "";
+        const preview = document.getElementById("adm-upload-preview");
+        if (preview) preview.innerHTML = '<p class="adm-upload-hint">No files selected.</p>';
+        const result = document.getElementById("adm-deploy-result");
+        if (result) { result.innerHTML = ""; result.classList.add("adm-hidden"); }
+        const deployBtn = document.getElementById("adm-deploy-btn");
+        if (deployBtn) deployBtn.disabled = true;
         modal.classList.remove("adm-hidden");
-        __ghSelectedFiles.clear();
-        __ghCurrentPath = "";
-        updateDeployFileList([]);
-        updateDeploySelection();
-        await loadGithubFiles("");
     }
 
     function closeDeployModal() {
@@ -527,139 +527,116 @@ Self-contained: no shared global state, IIFE wrapper.
         if (modal) modal.classList.add("adm-hidden");
     }
 
-    async function loadGithubFiles(path) {
-        __ghCurrentPath = path;
-        const listEl = document.getElementById("adm-gh-file-list");
-        if (!listEl) return;
-        listEl.innerHTML = '<div class="adm-gh-loading">Loading…</div>';
+    function onFilesSelected() {
+        const input = document.getElementById("adm-upload-input");
+        const preview = document.getElementById("adm-upload-preview");
+        const deployBtn = document.getElementById("adm-deploy-btn");
+        if (!input || !preview) return;
 
-        const res = await api("/api/github/files?path=" + encodeURIComponent(path));
-        if (!res || !res.ok) {
-            listEl.innerHTML = `<div class="adm-gh-error">Failed: ${escapeHtml((res && res.data && res.data.message) || "error")}</div>`;
+        const files = Array.from(input.files);
+        if (!files.length) {
+            preview.innerHTML = '<p class="adm-upload-hint">No files selected.</p>';
+            if (deployBtn) deployBtn.disabled = true;
             return;
         }
 
-        const items = res.data.items || [];
-        const pathEl = document.getElementById("adm-gh-path");
-        if (pathEl) pathEl.textContent = path || "(root)";
-
         let html = "";
-        if (path) {
-            html += `<div class="adm-gh-item adm-gh-item--dir" data-path="${escapeHtml(path.split("/").slice(0, -1).join("/"))}" data-type="back">
-                <span class="adm-gh-icon">←</span> ..
+        for (const f of files) {
+            html += `<div class="adm-upload-file-row">
+                <span class="adm-gh-icon">📄</span>
+                <span class="adm-gh-name">${escapeHtml(f.name)}</span>
+                <span class="adm-gh-size">${formatBytes(f.size)}</span>
             </div>`;
         }
-        for (const item of items) {
-            const icon = item.type === "dir" ? "📁" : "📄";
-            const checked = __ghSelectedFiles.has(item.path) ? "checked" : "";
-            html += `<div class="adm-gh-item" data-path="${escapeHtml(item.path)}" data-type="${escapeHtml(item.type)}">`;
-            if (item.type === "file") {
-                html += `<input type="checkbox" class="adm-gh-check" data-path="${escapeHtml(item.path)}" ${checked}>`;
-            }
-            html += `<span class="adm-gh-icon">${icon}</span>
-                <span class="adm-gh-name">${escapeHtml(item.name)}</span>`;
-            if (item.type === "file") {
-                html += `<span class="adm-gh-size">${formatBytes(item.size)}</span>`;
-            }
-            html += `</div>`;
-        }
-        if (!items.length && !path) {
-            html = '<div class="adm-gh-error">Repository is empty or not configured.</div>';
-        }
-        listEl.innerHTML = html;
-
-        // Bind events
-        listEl.querySelectorAll(".adm-gh-item").forEach(el => {
-            el.addEventListener("click", e => {
-                if (e.target.type === "checkbox") return;
-                const type = el.dataset.type;
-                const p = el.dataset.path;
-                if (type === "dir") loadGithubFiles(p);
-                else if (type === "back") loadGithubFiles(p);
-                else {
-                    // Toggle checkbox
-                    const cb = el.querySelector(".adm-gh-check");
-                    if (cb) { cb.checked = !cb.checked; cb.dispatchEvent(new Event("change")); }
-                }
-            });
-        });
-        listEl.querySelectorAll(".adm-gh-check").forEach(cb => {
-            cb.addEventListener("change", () => {
-                const p = cb.dataset.path;
-                if (cb.checked) __ghSelectedFiles.add(p);
-                else __ghSelectedFiles.delete(p);
-                updateDeploySelection();
-            });
-        });
-    }
-
-    function updateDeploySelection() {
-        const countEl = document.getElementById("adm-gh-selected-count");
-        if (countEl) countEl.textContent = __ghSelectedFiles.size;
-        const deployBtn = document.getElementById("adm-deploy-btn");
-        if (deployBtn) deployBtn.disabled = __ghSelectedFiles.size === 0;
-    }
-
-    function formatBytes(b) {
-        if (!b) return "";
-        if (b < 1024) return b + " B";
-        if (b < 1048576) return (b / 1024).toFixed(1) + " KB";
-        return (b / 1048576).toFixed(1) + " MB";
+        preview.innerHTML = html;
+        if (deployBtn) deployBtn.disabled = false;
     }
 
     async function runDeploy() {
-        if (!__ghSelectedFiles.size) return;
+        const input = document.getElementById("adm-upload-input");
+        if (!input || !input.files.length) return;
+
         const doRestart = document.getElementById("adm-deploy-restart") &&
                           document.getElementById("adm-deploy-restart").checked;
-        const files = Array.from(__ghSelectedFiles);
+
+        const serverPath = (document.getElementById("adm-server-path") &&
+                            document.getElementById("adm-server-path").value.trim()) ||
+                           "/home/container/";
+
         const deployBtn = document.getElementById("adm-deploy-btn");
         if (deployBtn) { deployBtn.disabled = true; deployBtn.textContent = "Deploying…"; }
 
-        showToast(`Deploying ${files.length} file(s) to all panels…`, "warn");
-
-        const res = await api("/api/github/deploy", {
-            method: "POST",
-            body: { files, restart: doRestart },
-        });
-
-        if (deployBtn) { deployBtn.disabled = false; deployBtn.textContent = "🚀 Deploy"; }
-
-        if (!res || !res.ok) {
-            showToast("Deploy failed: " + ((res && res.data && res.data.message) || "error"), "error");
-            return;
+        const formData = new FormData();
+        for (const f of input.files) {
+            formData.append("files[]", f, f.webkitRelativePath || f.name);
         }
+        formData.append("server_path", serverPath);
+        formData.append("restart", doRestart ? "true" : "false");
 
-        const { deployed, total_files, total_panels, results } = res.data;
-        const allOk = results.every(r => r.status === "ok");
+        showToast(`Deploying ${input.files.length} file(s) to all panels…`, "warn");
 
-        // Show result in modal
-        const resultEl = document.getElementById("adm-deploy-result");
-        if (resultEl) {
-            let html = `<div class="adm-deploy-summary ${allOk ? "is-ok" : "is-warn"}">
-                Deployed ${deployed}/${total_files} file(s) to ${total_panels} panel(s)
-                ${doRestart ? "· Restarting…" : ""}
-            </div>`;
-            for (const r of results) {
-                const icon = r.status === "ok" ? "✅" : r.status === "partial" ? "⚠️" : "❌";
-                html += `<div class="adm-deploy-row">
-                    <span>${icon} <code>${escapeHtml(r.file)}</code></span>
-                    <div class="adm-deploy-panels">`;
-                for (const p of r.panels || []) {
-                    const pIcon = p.status === "ok" ? "✓" : "✗";
-                    html += `<span class="adm-deploy-panel ${p.status === "ok" ? "is-ok" : "is-err"}">${pIcon} ${escapeHtml(p.name)}</span>`;
-                }
-                html += `</div></div>`;
+        try {
+            const r = await fetch("/api/upload_deploy", {
+                method: "POST",
+                headers: { password: PASSWORD },
+                body: formData,
+            });
+
+            if (deployBtn) { deployBtn.disabled = false; deployBtn.textContent = "🚀 Deploy"; }
+
+            if (r.status === 401 || r.status === 403) {
+                localStorage.removeItem("adm_password");
+                alert("Wrong password.");
+                location.reload();
+                return;
             }
-            resultEl.innerHTML = html;
-            resultEl.classList.remove("adm-hidden");
+
+            const data = await r.json().catch(() => ({}));
+            const resultEl = document.getElementById("adm-deploy-result");
+
+            if (!r.ok || !data) {
+                showToast("Deploy failed: " + (data.message || r.status), "error");
+                return;
+            }
+
+            const { deployed, total_files, total_panels, results } = data;
+            const allOk = (results || []).every(r => r.status === "ok");
+
+            if (resultEl) {
+                let html = `<div class="adm-deploy-summary ${allOk ? "is-ok" : "is-warn"}">
+                    ✅ Deployed ${deployed}/${total_files} file(s) to ${total_panels} panel(s)
+                    ${doRestart ? " · Restarting servers…" : ""}
+                </div>`;
+                for (const res of results || []) {
+                    const icon = res.status === "ok" ? "✅" : "⚠️";
+                    html += `<div class="adm-deploy-row">
+                        <span>${icon} <code>${escapeHtml(res.file)}</code>
+                        <small style="color:var(--adm-muted)">${formatBytes(res.size)}</small></span>
+                        <div class="adm-deploy-panels">`;
+                    for (const p of res.panels || []) {
+                        html += `<span class="adm-deploy-panel ${p.status === "ok" ? "is-ok" : "is-err"}">
+                            ${p.status === "ok" ? "✓" : "✗"} ${escapeHtml(p.name)}
+                        </span>`;
+                    }
+                    html += `</div></div>`;
+                }
+                resultEl.innerHTML = html;
+                resultEl.classList.remove("adm-hidden");
+            }
+
+            showToast(
+                allOk
+                    ? `✅ ${deployed} file(s) deployed to ${total_panels} panels!`
+                    : `⚠ Deploy partial — check results`,
+                allOk ? "success" : "warn"
+            );
+
+            if (doRestart) setTimeout(() => refresh({ silent: true }), 4000);
+
+        } catch (err) {
+            if (deployBtn) { deployBtn.disabled = false; deployBtn.textContent = "🚀 Deploy"; }
+            showToast("Deploy error: " + err.message, "error");
         }
-
-        showToast(
-            allOk ? `✅ ${deployed} file(s) deployed to ${total_panels} panel(s)!` : `⚠ Deploy partial — check results`,
-            allOk ? "success" : "warn"
-        );
-
-        if (doRestart) setTimeout(() => refresh({ silent: true }), 4000);
     }
 
     /* ===================================================================
@@ -962,8 +939,29 @@ Self-contained: no shared global state, IIFE wrapper.
         const deployModalClose = document.querySelectorAll("[data-deploy-close]");
         deployModalClose.forEach(el => el.addEventListener("click", closeDeployModal));
 
-        const deployRunBtn = document.getElementById("adm-deploy-btn");
-        if (deployRunBtn) deployRunBtn.addEventListener("click", runDeploy);
+        const deployBtn = document.getElementById("adm-deploy-btn");
+        if (deployBtn) deployBtn.addEventListener("click", runDeploy);
+
+        const uploadInput = document.getElementById("adm-upload-input");
+        if (uploadInput) uploadInput.addEventListener("change", onFilesSelected);
+
+        // Allow clicking the upload zone label to also trigger file picker
+        const uploadZone = document.querySelector(".adm-upload-zone");
+        if (uploadZone && uploadInput) {
+            uploadZone.addEventListener("dragover", e => { e.preventDefault(); uploadZone.style.borderColor = "rgba(168,85,247,0.9)"; });
+            uploadZone.addEventListener("dragleave", () => { uploadZone.style.borderColor = ""; });
+            uploadZone.addEventListener("drop", e => {
+                e.preventDefault();
+                uploadZone.style.borderColor = "";
+                if (e.dataTransfer.files.length) {
+                    // Assign dropped files to input
+                    const dt = new DataTransfer();
+                    for (const f of e.dataTransfer.files) dt.items.add(f);
+                    uploadInput.files = dt.files;
+                    onFilesSelected();
+                }
+            });
+        }
 
         refresh({ silent: false });
 

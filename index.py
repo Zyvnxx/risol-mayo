@@ -855,6 +855,109 @@ def api_panels_power():
 
 
 # ---------------------------------------------------------------------------
+# Direct upload → deploy to all panels
+# ---------------------------------------------------------------------------
+@app.route("/api/upload_deploy", methods=["POST"])
+def api_upload_deploy():
+    """
+    Accept one or more file uploads from the browser and write them
+    directly to every configured Pterodactyl server.
+
+    Form fields:
+      files[]         — one or more files (multipart/form-data)
+      server_path     — destination path prefix on the server (default: /home/container/)
+      panel_ids       — comma-separated panel ids to target (empty = all)
+      restart         — "true" to restart all targeted panels after deploy
+    """
+    if not _check_password():
+        return _unauthorized()
+
+    if "files[]" not in request.files:
+        return jsonify({"status": "error", "message": "No files uploaded."}), 400
+
+    uploaded = request.files.getlist("files[]")
+    server_path_prefix = (request.form.get("server_path") or "").strip()
+    if not server_path_prefix:
+        server_path_prefix = _get_config().get("serverBasePath", "/home/container/")
+    if not server_path_prefix.endswith("/"):
+        server_path_prefix += "/"
+
+    panel_ids_raw = (request.form.get("panel_ids") or "").strip()
+    do_restart = request.form.get("restart", "false").lower() == "true"
+
+    all_panels = _collect_panels()
+    if panel_ids_raw:
+        target_ids = {p.strip() for p in panel_ids_raw.split(",")}
+        panels = [p for p in all_panels if p["id"] in target_ids]
+    else:
+        panels = all_panels
+
+    if not panels:
+        return jsonify({"status": "error", "message": "No panels to deploy to."}), 400
+
+    results = []
+
+    for f in uploaded:
+        filename = f.filename or "unknown"
+        content = f.read()
+
+        # Preserve relative path if browser sends it (webkitRelativePath)
+        server_file_path = server_path_prefix + filename
+
+        panel_results = []
+        for panel in panels:
+            ok, msg = _ptero_write_file(panel, server_file_path, content)
+            panel_results.append({
+                "id": panel["id"],
+                "name": panel["name"],
+                "status": "ok" if ok else "error",
+                "message": msg,
+            })
+
+        results.append({
+            "file": filename,
+            "size": len(content),
+            "status": "ok" if all(p["status"] == "ok" for p in panel_results) else "partial",
+            "panels": panel_results,
+        })
+
+    # Optional restart
+    restart_results = []
+    if do_restart:
+        for panel in panels:
+            url = "{}/api/client/servers/{}/power".format(
+                panel["panelUrl"], panel["serverId"]
+            )
+            try:
+                r = requests.post(
+                    url,
+                    headers={
+                        "Authorization": "Bearer " + panel["clientApiKey"],
+                        "Accept": "application/json",
+                        "Content-Type": "application/json",
+                    },
+                    json={"signal": "restart"},
+                    timeout=PTERO_TIMEOUT,
+                )
+                ok = 200 <= r.status_code < 300
+                if ok:
+                    _invalidate_status(panel["id"])
+                restart_results.append({"id": panel["id"], "name": panel["name"], "restarted": ok})
+            except Exception as e:
+                restart_results.append({"id": panel["id"], "name": panel["name"], "restarted": False, "error": str(e)})
+
+    ok_files = sum(1 for r in results if r["status"] in ("ok", "partial"))
+    return jsonify({
+        "status": "success" if ok_files > 0 else "error",
+        "deployed": ok_files,
+        "total_files": len(results),
+        "total_panels": len(panels),
+        "results": results,
+        "restarts": restart_results,
+    }), 200
+
+
+# ---------------------------------------------------------------------------
 # GitHub helpers
 # ---------------------------------------------------------------------------
 def _github_headers():
