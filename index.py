@@ -854,6 +854,353 @@ def api_panels_power():
     }), 502
 
 
+# ---------------------------------------------------------------------------
+# GitHub helpers
+# ---------------------------------------------------------------------------
+def _github_headers():
+    token = _get_config().get("githubToken", "")
+    h = {"Accept": "application/vnd.github.v3+json"}
+    if token:
+        h["Authorization"] = "token " + token
+    return h
+
+
+def _github_repo():
+    return _get_config().get("githubRepo", "")
+
+
+def _github_branch():
+    return _get_config().get("githubBranch", "main")
+
+
+def _github_list_files(path=""):
+    """List files/folders in repo at given path. Returns list of items."""
+    repo = _github_repo()
+    if not repo:
+        return None, "githubRepo not configured."
+    branch = _github_branch()
+    url = "https://api.github.com/repos/{}/contents/{}".format(repo, path)
+    try:
+        r = requests.get(url, headers=_github_headers(),
+                         params={"ref": branch}, timeout=10)
+    except requests.RequestException as e:
+        return None, str(e)
+    if r.status_code == 404:
+        return None, "Path not found in repo."
+    if r.status_code == 401:
+        return None, "GitHub token invalid or missing."
+    if not (200 <= r.status_code < 300):
+        return None, "GitHub API error HTTP {}.".format(r.status_code)
+    return r.json(), None
+
+
+def _github_get_file_content(path):
+    """Fetch raw file content from GitHub. Returns (content_bytes, error)."""
+    repo = _github_repo()
+    branch = _github_branch()
+    # Use raw URL for efficiency
+    url = "https://raw.githubusercontent.com/{}/{}/{}".format(repo, branch, path)
+    try:
+        r = requests.get(url, headers=_github_headers(), timeout=15)
+    except requests.RequestException as e:
+        return None, str(e)
+    if r.status_code == 404:
+        return None, "File not found: " + path
+    if not (200 <= r.status_code < 300):
+        return None, "GitHub HTTP {}: {}".format(r.status_code, r.text[:100])
+    return r.content, None
+
+
+# ---------------------------------------------------------------------------
+# Pterodactyl file write helper
+# ---------------------------------------------------------------------------
+def _ptero_write_file(panel, server_file_path, content_bytes):
+    """Write file content to a Pterodactyl server. Returns (ok, message)."""
+    if not (panel.get("panelUrl") and panel.get("serverId") and panel.get("clientApiKey")):
+        return False, "Panel not configured."
+    url = "{}/api/client/servers/{}/files/write".format(
+        panel["panelUrl"], panel["serverId"]
+    )
+    # Ensure path starts with /
+    if not server_file_path.startswith("/"):
+        server_file_path = "/" + server_file_path
+    try:
+        r = requests.post(
+            url,
+            headers={
+                "Authorization": "Bearer " + panel["clientApiKey"],
+                "Accept": "application/json",
+                "Content-Type": "application/octet-stream",
+            },
+            params={"file": server_file_path},
+            data=content_bytes,
+            timeout=PTERO_TIMEOUT,
+        )
+    except requests.RequestException as e:
+        return False, "Request failed: " + str(e)
+    if 200 <= r.status_code < 300 or r.status_code == 204:
+        return True, "ok"
+    return False, "HTTP {}: {}".format(r.status_code, r.text[:200])
+
+
+def _panel_server_path(panel):
+    """Base path on the server for this panel (trailing slash)."""
+    cfg_default = _get_config().get("serverBasePath", "/home/container/")
+    path = panel.get("serverPath") or cfg_default
+    if not path.endswith("/"):
+        path += "/"
+    return path
+
+
+# ---------------------------------------------------------------------------
+# GitHub deploy endpoints
+# ---------------------------------------------------------------------------
+@app.route("/api/github/files", methods=["GET"])
+def api_github_files():
+    """List files/folders in the GitHub repo at a given path."""
+    if not _check_password():
+        return _unauthorized()
+    path = request.args.get("path", "")
+    items, err = _github_list_files(path)
+    if err:
+        return jsonify({"status": "error", "message": err}), 400
+    # Simplify response
+    result = [
+        {
+            "name": item["name"],
+            "path": item["path"],
+            "type": item["type"],  # "file" or "dir"
+            "size": item.get("size", 0),
+        }
+        for item in (items if isinstance(items, list) else [])
+    ]
+    return jsonify({"status": "success", "items": result, "path": path}), 200
+
+
+@app.route("/api/github/deploy", methods=["POST"])
+def api_github_deploy():
+    """
+    Fetch selected files from GitHub and write them to all (or selected) panels.
+
+    Body (JSON):
+      files      — list of file paths in the repo to deploy (e.g. ["cogs/mine.py"])
+      panel_ids  — list of panel ids to deploy to (omit or [] = all panels)
+      restart    — bool, restart each panel after deploy (default false)
+    """
+    if not _check_password():
+        return _unauthorized()
+
+    body = request.get_json(silent=True) or {}
+    files = body.get("files") or []
+    panel_ids = body.get("panel_ids") or []
+    do_restart = bool(body.get("restart", False))
+
+    if not files:
+        return jsonify({"status": "error", "message": "No files specified."}), 400
+
+    all_panels = _collect_panels()
+    if panel_ids:
+        panels = [p for p in all_panels if p["id"] in panel_ids]
+    else:
+        panels = all_panels
+
+    if not panels:
+        return jsonify({"status": "error", "message": "No panels to deploy to."}), 400
+
+    results = []
+
+    for file_path in files:
+        # Fetch from GitHub
+        content, err = _github_get_file_content(file_path)
+        if err:
+            results.append({
+                "file": file_path,
+                "status": "error",
+                "message": "GitHub fetch failed: " + err,
+                "panels": [],
+            })
+            continue
+
+        panel_results = []
+        for panel in panels:
+            base = _panel_server_path(panel)
+            server_path = base + file_path
+            ok, msg = _ptero_write_file(panel, server_path, content)
+            panel_results.append({
+                "id": panel["id"],
+                "name": panel["name"],
+                "status": "ok" if ok else "error",
+                "message": msg,
+            })
+
+        results.append({
+            "file": file_path,
+            "status": "ok" if all(p["status"] == "ok" for p in panel_results) else "partial",
+            "panels": panel_results,
+        })
+
+    # Optionally restart panels
+    restart_results = []
+    if do_restart:
+        for panel in panels:
+            restart_url = "{}/api/client/servers/{}/power".format(
+                panel["panelUrl"], panel["serverId"]
+            )
+            try:
+                r = requests.post(
+                    restart_url,
+                    headers={
+                        "Authorization": "Bearer " + panel["clientApiKey"],
+                        "Accept": "application/json",
+                        "Content-Type": "application/json",
+                    },
+                    json={"signal": "restart"},
+                    timeout=PTERO_TIMEOUT,
+                )
+                ok = 200 <= r.status_code < 300
+                restart_results.append({"id": panel["id"], "restarted": ok})
+                if ok:
+                    _invalidate_status(panel["id"])
+            except Exception as e:
+                restart_results.append({"id": panel["id"], "restarted": False, "error": str(e)})
+
+    ok_files = sum(1 for r in results if r["status"] in ("ok", "partial"))
+    return jsonify({
+        "status": "success" if ok_files > 0 else "error",
+        "deployed": ok_files,
+        "total_files": len(files),
+        "total_panels": len(panels),
+        "results": results,
+        "restarts": restart_results,
+    }), 200
+
+
+# ---------------------------------------------------------------------------
+# Send a shell command to a single Pterodactyl server via websocket command
+# ---------------------------------------------------------------------------
+def _ptero_send_command(panel, command: str):
+    """Send a console command to a server via the Pterodactyl Client API.
+    Returns (ok, message)."""
+    if not (panel.get("panelUrl") and panel.get("serverId") and panel.get("clientApiKey")):
+        return False, "Panel not configured."
+    url = "{}/api/client/servers/{}/command".format(panel["panelUrl"], panel["serverId"])
+    try:
+        r = requests.post(
+            url,
+            headers={
+                "Authorization": "Bearer " + panel["clientApiKey"],
+                "Accept": "application/json",
+                "Content-Type": "application/json",
+            },
+            json={"command": command},
+            timeout=PTERO_TIMEOUT,
+        )
+    except requests.RequestException as e:
+        return False, "Request failed: " + str(e)
+    if 200 <= r.status_code < 300 or r.status_code == 204:
+        return True, "ok"
+    return False, "HTTP " + str(r.status_code) + ": " + r.text[:200]
+
+
+@app.route("/api/panels/command", methods=["POST"])
+def api_panel_command():
+    """Send a console command to a single panel."""
+    if not _check_password():
+        return _unauthorized()
+    body = request.get_json(silent=True) or {}
+    panel_id = str(body.get("id") or "").strip()
+    command = str(body.get("command") or "").strip()
+    if not command:
+        return jsonify({"status": "error", "message": "command is required."}), 400
+
+    panel = next((p for p in _collect_panels() if p["id"] == panel_id), None)
+    if panel is None:
+        return jsonify({"status": "error", "message": "Unknown panel id."}), 404
+
+    ok, msg = _ptero_send_command(panel, command)
+    if ok:
+        return jsonify({"status": "success", "id": panel_id, "command": command}), 200
+    return jsonify({"status": "error", "message": msg}), 502
+
+
+@app.route("/api/panels/update_all", methods=["POST"])
+def api_panels_update_all():
+    """
+    Send a git pull + pip install command to ALL configured panels at once.
+    Each panel runs the update command in its own server console.
+    Also optionally restarts each server after the update.
+    
+    Body (JSON):
+      command  — shell command to run (default: git pull && pip install -r requirements.txt)
+      restart  — boolean, whether to restart each server after sending the command (default: false)
+    """
+    if not _check_password():
+        return _unauthorized()
+
+    body = request.get_json(silent=True) or {}
+    command = str(body.get("command") or "").strip()
+    do_restart = bool(body.get("restart", False))
+
+    if not command:
+        command = "git pull && pip install -r requirements.txt"
+
+    panels = _collect_panels()
+    if not panels:
+        return jsonify({"status": "error", "message": "No panels configured."}), 400
+
+    results = []
+    ok_count = 0
+
+    for panel in panels:
+        pid = panel["id"]
+        name = panel["name"]
+
+        # Skip unconfigured panels
+        if not (panel["panelUrl"] and panel["serverId"] and panel["clientApiKey"]):
+            results.append({"id": pid, "name": name, "status": "skipped", "message": "Not configured."})
+            continue
+
+        ok, msg = _ptero_send_command(panel, command)
+        if ok:
+            ok_count += 1
+            entry = {"id": pid, "name": name, "status": "ok", "message": "Command sent."}
+
+            # Optionally restart after update
+            if do_restart:
+                restart_url = "{}/api/client/servers/{}/power".format(
+                    panel["panelUrl"], panel["serverId"]
+                )
+                try:
+                    r = requests.post(
+                        restart_url,
+                        headers={
+                            "Authorization": "Bearer " + panel["clientApiKey"],
+                            "Accept": "application/json",
+                            "Content-Type": "application/json",
+                        },
+                        json={"signal": "restart"},
+                        timeout=PTERO_TIMEOUT,
+                    )
+                    if 200 <= r.status_code < 300:
+                        entry["restart"] = "queued"
+                        _invalidate_status(pid)
+                    else:
+                        entry["restart"] = "failed (HTTP {})".format(r.status_code)
+                except requests.RequestException as e:
+                    entry["restart"] = "failed: " + str(e)
+
+            results.append(entry)
+        else:
+            results.append({"id": pid, "name": name, "status": "error", "message": msg})
+
+    return jsonify({
+        "status": "success" if ok_count > 0 else "error",
+        "sent": ok_count,
+        "total": len(panels),
+        "results": results,
+    }), 200
+
+
 @app.route("/api/panels/<panel_id>", methods=["GET"])
 def api_panel_one(panel_id):
     """Status for a single panel.

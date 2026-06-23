@@ -200,6 +200,172 @@ code {
 }
 .adm-btn-kill:hover:not(:disabled) { background: rgba(248, 113, 113, 0.18); }
 
+.adm-btn-update {
+    background: rgba(56, 189, 248, 0.12);
+    border: 1px solid rgba(56, 189, 248, 0.40);
+    color: #38bdf8;
+    font-weight: 700;
+}
+.adm-btn-update:hover:not(:disabled) {
+    background: rgba(56, 189, 248, 0.22);
+    border-color: rgba(56, 189, 248, 0.65);
+}
+
+.adm-btn-deploy {
+    background: rgba(168, 85, 247, 0.15);
+    border: 1px solid rgba(168, 85, 247, 0.45);
+    color: #c084fc;
+    font-weight: 700;
+}
+.adm-btn-deploy:hover:not(:disabled) {
+    background: rgba(168, 85, 247, 0.25);
+    border-color: rgba(168, 85, 247, 0.70);
+}
+.adm-btn-deploy:disabled {
+    opacity: 0.4;
+    cursor: not-allowed;
+}
+
+/* ============ DEPLOY MODAL - WIDE ============ */
+.adm-modal-card--wide {
+    max-width: 720px;
+    width: 95vw;
+}
+
+/* ============ GITHUB FILE BROWSER ============ */
+.adm-gh-browser {
+    border: 1px solid var(--adm-border);
+    border-radius: 10px;
+    overflow: hidden;
+    background: rgba(0,0,0,0.15);
+    max-height: 360px;
+    overflow-y: auto;
+}
+
+.adm-gh-file-list {
+    padding: 6px;
+    display: flex;
+    flex-direction: column;
+    gap: 2px;
+}
+
+.adm-gh-loading,
+.adm-gh-error {
+    padding: 16px;
+    color: var(--adm-muted);
+    font-size: 13px;
+    text-align: center;
+    font-style: italic;
+}
+.adm-gh-error { color: var(--adm-danger); }
+
+.adm-gh-item {
+    display: flex;
+    align-items: center;
+    gap: 10px;
+    padding: 8px 10px;
+    border-radius: 8px;
+    cursor: pointer;
+    font-size: 13px;
+    color: var(--adm-text);
+    transition: background 0.1s ease;
+    user-select: none;
+}
+.adm-gh-item:hover { background: rgba(255,255,255,0.05); }
+.adm-gh-item--dir { color: #60a5fa; }
+
+.adm-gh-check {
+    width: 15px;
+    height: 15px;
+    accent-color: #a855f7;
+    cursor: pointer;
+    flex-shrink: 0;
+}
+
+.adm-gh-icon { font-size: 14px; flex-shrink: 0; }
+.adm-gh-name { flex: 1; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.adm-gh-size { font-size: 11px; color: var(--adm-muted); flex-shrink: 0; }
+
+/* ============ DEPLOY OPTIONS ============ */
+.adm-deploy-options {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    gap: 12px;
+    padding: 10px 4px;
+    flex-wrap: wrap;
+}
+
+.adm-deploy-opt {
+    display: flex;
+    align-items: center;
+    gap: 8px;
+    font-size: 13px;
+    color: var(--adm-text);
+    cursor: pointer;
+}
+.adm-deploy-opt input { accent-color: #a855f7; width: 15px; height: 15px; }
+
+.adm-deploy-count {
+    font-size: 12px;
+    color: var(--adm-muted);
+    background: rgba(168,85,247,0.10);
+    border: 1px solid rgba(168,85,247,0.25);
+    padding: 4px 10px;
+    border-radius: 999px;
+}
+
+/* ============ DEPLOY RESULTS ============ */
+.adm-deploy-result {
+    margin-top: 8px;
+    border: 1px solid var(--adm-border);
+    border-radius: 10px;
+    overflow: hidden;
+    font-size: 13px;
+}
+
+.adm-deploy-summary {
+    padding: 10px 14px;
+    font-weight: 600;
+    background: rgba(74,222,128,0.08);
+    color: #4ade80;
+    border-bottom: 1px solid var(--adm-border);
+}
+.adm-deploy-summary.is-warn {
+    background: rgba(245,158,11,0.08);
+    color: #f59e0b;
+}
+
+.adm-deploy-row {
+    padding: 10px 14px;
+    border-bottom: 1px solid var(--adm-border);
+    display: flex;
+    flex-direction: column;
+    gap: 6px;
+}
+.adm-deploy-row:last-child { border-bottom: none; }
+.adm-deploy-row code {
+    background: rgba(255,255,255,0.06);
+    padding: 2px 6px;
+    border-radius: 4px;
+    font-size: 12px;
+}
+
+.adm-deploy-panels {
+    display: flex;
+    flex-wrap: wrap;
+    gap: 6px;
+    padding-left: 16px;
+}
+.adm-deploy-panel {
+    font-size: 11px;
+    padding: 2px 8px;
+    border-radius: 999px;
+    font-weight: 600;
+}
+.adm-deploy-panel.is-ok  { background: rgba(74,222,128,0.12); color: #4ade80; border: 1px solid rgba(74,222,128,0.30); }
+.adm-deploy-panel.is-err { background: rgba(239,68,68,0.12);  color: #ef4444; border: 1px solid rgba(239,68,68,0.30); }
+
 /* ============ MAIN ============ */
 .adm-main {
     width: 100%;
