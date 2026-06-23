@@ -548,7 +548,13 @@ def _normalize_server_path(path):
 
     Returns a leading-slash, single-line path with surrounding whitespace
     stripped. Blocks parent-directory traversal so an upload can never
-    escape the server's data root."""
+    escape the server's data root.
+
+    The Pterodactyl Client API file paths are relative to the server's
+    data root (which is itself ``/home/container`` on the host). So a path
+    copied from the panel's file manager like ``/home/container/config``
+    must be reduced to ``/config`` — otherwise the API creates a literal
+    ``home/container`` folder inside the root. We strip that prefix here."""
     p = str(path or "").strip().replace("\\", "/")
     if not p:
         return None, "Destination path is required."
@@ -561,8 +567,17 @@ def _normalize_server_path(path):
         if seg == "..":
             return None, "Path traversal ('..') is not allowed."
         parts.append(seg)
+
+    # Strip the server data-root prefix if the user pasted an absolute
+    # host path. Common roots: /home/container (default), /mnt/server.
+    for prefix in (["home", "container"], ["mnt", "server"]):
+        if parts[:len(prefix)] == prefix:
+            parts = parts[len(prefix):]
+            break
+
     if not parts:
-        return None, "Destination path is required."
+        # Path reduced to the root itself — valid as a folder target only.
+        return "/", None
     return "/" + "/".join(parts), None
 
 

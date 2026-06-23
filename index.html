@@ -115,8 +115,9 @@ Independent from any specific bot deployment.
                 <label class="adm-field adm-field-wide">
                     <span class="adm-field-label">Destination path on server *</span>
                     <input type="text" id="adm-upload-path" class="adm-field-input mono"
-                           placeholder="/plugins/  (folder for multiple files)  or  /config.yml  (single file)"
+                           placeholder="/config/  (existing folder)  or  /config.yml  (single file)"
                            autocomplete="off" spellcheck="false">
+                    <span class="adm-upload-hint">Relative to the server root. Use the existing folder, e.g. <code>/config/</code> — the <code>/home/container</code> prefix is stripped automatically.</span>
                 </label>
 
                 <div class="adm-field adm-field-wide">
